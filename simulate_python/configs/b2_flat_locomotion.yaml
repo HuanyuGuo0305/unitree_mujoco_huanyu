@@ -1,24 +1,21 @@
-policy_path: "../exported_policy/b2_flat_locomotion/policy.pt"
-xml_path: "../unitree_robots/b2/ground.xml"
+policy_path: "exported_policy/b2_flat_locomotion/policy.onnx"
+xml_path: "unitree_robots/b2/ground.xml"
 
+# Simulation settings
 simulation_duration: 60.0
 simulation_dt: 0.005
 control_decimation: 4
 
-num_actions: 12
-num_obs: 45
-
-# ==================== Default Posture ===================
-# Sequence: FL, FR, RL, RR\
+# Sequence: in mujoco order - FL, FR, RL, RR
 # For each leg: hip, thigh, calf
 default_angles: [
-  0.1,  0.8, -1.5,  # FL
-  -0.1, 0.8, -1.5,  # FR
-  0.1,  1.0, -1.5,  # RL
-  -0.1, 1.0, -1.5   # RR
+  0.1,  0.8, -1.5, 
+  -0.1, 0.8, -1.5, 
+  0.1,  1.0, -1.5,  
+  -0.1, 1.0, -1.5   
 ]
 
-# ==================== PD Gains ===================
+# PD gains
 kps: [
   150.0, 150.0, 150.0,
   150.0, 150.0, 150.0,
@@ -33,15 +30,8 @@ kds: [
   5.0, 5.0, 5.0
 ]
 
+num_actions: 12
 action_scale: 0.25
-cmd_scale: [1.0, 1.0, 1.0] 
-cmd_init: [0.0, 0.0, 0.0]  # [vx, vy, vyaw]
-
-use_phase_encoding: false
-use_height_scan: false
-use_obs_normalization: false
-
-print_obs: false
-print_action: false
-print_frequency: 50
-verbose: true
+num_obs: 45
+num_commands: 3
+command: [0.5, 0.3, 0.0]  # [vx, vy, vyaw]

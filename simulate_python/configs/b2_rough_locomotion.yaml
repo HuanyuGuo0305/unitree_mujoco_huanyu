@@ -1,4 +1,4 @@
-policy_path: "exported_policy/b2_flat_locomotion/policy_finetune.onnx"
+policy_path: "exported_policy/b2_rough_locomotion/policy.onnx"
 xml_path: "unitree_robots/b2/ground.xml"
 
 # Simulation settings
@@ -35,4 +35,4 @@ action_scale: 0.25
 num_obs: 45
 num_history: 5
 num_commands: 3
-command: [0.5, 0.0, 0.0]  # [vx, vy, vyaw]
+command: [0.0, 0.0, 0.0]  # [vx, vy, vyaw]

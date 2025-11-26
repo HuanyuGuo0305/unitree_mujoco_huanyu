@@ -91,7 +91,7 @@ if __name__ == "__main__":
 
     # Raw sensor values
     ang_vel_b = np.zeros(3, dtype=np.float32)
-    quat = np.zeros(4, dtype=np.float32)
+    quat = np.zeros(4, dtype=np.float32) 
     gravity_w = np.array([0.0, 0.0, -1.0], dtype=np.float32)
     gravity_b = np.zeros(3, dtype=np.float32)
     joint_pos = np.zeros(num_actions, dtype=np.float32)
@@ -133,6 +133,7 @@ if __name__ == "__main__":
 
     print(f"Joint mapping:")
     print(f"  MuJoCo order: {mujoco_joint_names[:3]}...")
+    print(f"  Ctrl order:   {mujoco_ctrl_joint_names[:3]}...")
     print(f"  Policy order: {policy_joint_names[:3]}...")
 
     counter = 0
@@ -146,12 +147,12 @@ if __name__ == "__main__":
     # Initialize robot pose
     d.qpos[0:3] = [0.0, 0.0, 0.5]
     d.qpos[3:7] = [1.0, 0.0, 0.0, 0.0]  # w, x, y, z
-    d.qpos[7:] = default_angles  # In MuJoCo order
-    d.qvel[:] = 0.0
+    d.qpos[7:] = default_angles
+    d.qvel[:3] = np.random.uniform(-0.2, 0.2, size=3)  # Small initial linear velocity
+    d.qvel[3:6] = np.random.uniform(-0.2, 0.2, size=3)  # Small initial angular velocity
 
     print(f"  Initialized at height {d.qpos[2]:.3f}m")
     print(f"  Default angles (MuJoCo order): {default_angles}")
-    print(f"  Initial qpos[7:] (MuJoCo order): {d.qpos[7:]}\n")
 
     mujoco.mj_forward(m, d)
 
@@ -159,6 +160,36 @@ if __name__ == "__main__":
     print(f"Starting simulation...")
     print(f"{'='*70}\n")
 
+    # Build initial history
+    sim_root_quat      = d.qpos[3:7].copy()
+    sim_root_ang_vel_b = d.qvel[3:6].copy()
+    sim_joint_pos      = d.qpos[7:7+num_actions].copy()[mujoco_to_policy_indices]
+    sim_joint_vel      = d.qvel[6:6+num_actions].copy()[mujoco_to_policy_indices]
+
+    quat[:]      = sim_root_quat
+    ang_vel_b[:] = sim_root_ang_vel_b
+    gravity_b    = quat_rotate_inverse_numpy(quat, gravity_w)
+
+    joint_pos[:] = sim_joint_pos
+    joint_vel[:] = sim_joint_vel
+
+    base_ang = ang_vel_b.copy()
+    base_grav = gravity_b.copy()
+    cmd_vec = commands.copy()
+    jpos_rel = (joint_pos - default_joint_pos[mujoco_to_policy_indices]).copy()
+    jvel_rel = joint_vel.copy()
+    last_act = np.zeros_like(actions)
+
+    if history_length > 1:
+        for _ in range(history_length):
+            ang_vel_hist.append(base_ang.copy())
+            gravity_hist.append(base_grav.copy())
+            commands_hist.append(cmd_vec.copy())
+            joint_pos_hist.append(jpos_rel.copy())
+            joint_vel_hist.append(jvel_rel.copy())
+            actions_hist.append(last_act.copy())
+
+    # Open viewer and run simulation
     with mujoco.viewer.launch_passive(m, d) as viewer:
         viewer.cam.type = mujoco.mjtCamera.mjCAMERA_FREE
         viewer.cam.azimuth = 135
@@ -167,111 +198,95 @@ if __name__ == "__main__":
         viewer.cam.lookat[:] = d.qpos[:3]
 
         start = time.time()
-        
+
         while viewer.is_running() and time.time() - start < simulation_duration:
             step_start = time.time()
 
-            # Read current joint states
-            current_pos_mj = d.qpos[7:7+num_actions]
-            current_vel_mj = d.qvel[6:6+num_actions]
+            # 1) PD control using current state
+            pos_for_pd = d.qpos[7:7+num_actions].copy()
+            vel_for_pd = d.qvel[6:6+num_actions].copy()
 
-            # Apply PD control
-            torques = kps * (target_joint_pos - current_pos_mj) - kds * current_vel_mj
-
-            # Clip torques to actuator limits
-            torques = np.clip(torques, 
-                                     [-200, -200, -320, -200, -200, -320, 
-                                      -200, -200, -320, -200, -200, -320],
-                                     [ 200,  200,  320,  200,  200,  320,
-                                       200,  200,  320,  200,  200,  320])
-
-            # Apply (convert from mujoco order to ctrl order)
+            torques = kps * (target_joint_pos - pos_for_pd) - kds * vel_for_pd
+            torques = np.clip(
+                torques,
+                [-200, -200, -320, -200, -200, -320,
+                 -200, -200, -320, -200, -200, -320],
+                [ 200,  200,  320,  200,  200,  320,
+                  200,  200,  320,  200,  200,  320],
+            )
             d.ctrl[:] = torques[mujoco_to_ctrl_indices]
 
-            # Simulation step
+            # 2) advance simulation
             mujoco.mj_step(m, d)
             viewer.cam.lookat[:] = d.qpos[:3]
 
-            # Policy update
-            if USE_POLICY and counter % control_decimation == 0:
-                # Update raw sensor values
-                sim_root_quat = d.qpos[3:7]  # w, x, y, z
-                sim_root_ang_vel_b = d.qvel[3:6]  # MuJoCo angular velocity is in body frame
-                sim_joint_pos = current_pos_mj[mujoco_to_policy_indices]
-                sim_joint_vel = current_vel_mj[mujoco_to_policy_indices]
+            # 3) policy update at control frequency
+            if USE_POLICY and counter % control_decimation == 0:            
+                sim_root_quat      = d.qpos[3:7].copy()
+                sim_root_ang_vel_b = d.qvel[3:6].copy()
+                sim_joint_pos      = d.qpos[7:7+num_actions].copy()[mujoco_to_policy_indices]
+                sim_joint_vel      = d.qvel[6:6+num_actions].copy()[mujoco_to_policy_indices]
 
-                # Update state variables
-                quat[:] = sim_root_quat
+                quat[:]      = sim_root_quat
                 ang_vel_b[:] = sim_root_ang_vel_b
-                
-                # Rotate gravity to body frame using NumPy function
-                gravity_b = quat_rotate_inverse_numpy(quat, gravity_w)
+                gravity_b    = quat_rotate_inverse_numpy(quat, gravity_w)
 
                 joint_pos[:] = sim_joint_pos
                 joint_vel[:] = sim_joint_vel
 
-                curr_ang_vel   = ang_vel_b.copy()                                   # (3,)
-                curr_gravity   = gravity_b.copy()                                   # (3,)
-                curr_commands  = commands.copy()                                    # (3,)
-                curr_joint_pos = (joint_pos - default_joint_pos[mujoco_to_policy_indices]).copy()      # (12,)
-                curr_joint_vel = joint_vel.copy()                                   # (12,)
-                curr_actions   = actions.copy()                                     # (12,)
+                curr_ang_vel   = ang_vel_b.copy()
+                curr_gravity   = gravity_b.copy()
+                curr_commands  = commands.copy()
+                curr_joint_pos = (joint_pos - default_joint_pos[mujoco_to_policy_indices]).copy()
+                curr_joint_vel = joint_vel.copy()
+                curr_actions   = actions.copy()
 
-                if history_length > 1:
-                    # Initialize history by filling with the first observation
-                    if len(ang_vel_hist) == 0:
-                        for _ in range(history_length):
-                            ang_vel_hist.append(curr_ang_vel.copy())
-                            gravity_hist.append(curr_gravity.copy())
-                            commands_hist.append(curr_commands.copy())
-                            joint_pos_hist.append(curr_joint_pos.copy())
-                            joint_vel_hist.append(curr_joint_vel.copy())
-                            actions_hist.append(curr_actions.copy())
-                    else:
-                        # Push newest values
-                        ang_vel_hist.append(curr_ang_vel.copy())
-                        gravity_hist.append(curr_gravity.copy())
-                        commands_hist.append(curr_commands.copy())
-                        joint_pos_hist.append(curr_joint_pos.copy())
-                        joint_vel_hist.append(curr_joint_vel.copy())
-                        actions_hist.append(curr_actions.copy())
+                ang_vel_hist.append(curr_ang_vel.copy())
+                gravity_hist.append(curr_gravity.copy())
+                commands_hist.append(curr_commands.copy())
+                joint_pos_hist.append(curr_joint_pos.copy())
+                joint_vel_hist.append(curr_joint_vel.copy())
+                actions_hist.append(curr_actions.copy())
 
-                    # --- Construct observation with history ---
-                    ang_arr   = np.array(ang_vel_hist)      # (H, 3)
-                    grav_arr  = np.array(gravity_hist)      # (H, 3)
-                    cmd_arr   = np.array(commands_hist)     # (H, 3)
-                    jpos_arr  = np.array(joint_pos_hist)    # (H, 12)
-                    jvel_arr  = np.array(joint_vel_hist)    # (H, 12)
-                    act_arr   = np.array(actions_hist)      # (H, 12)
+                ang_arr  = np.array(ang_vel_hist)
+                grav_arr = np.array(gravity_hist)
+                cmd_arr  = np.array(commands_hist)
+                jpos_arr = np.array(joint_pos_hist)
+                jvel_arr = np.array(joint_vel_hist)
+                act_arr  = np.array(actions_hist)
 
-                    obs = np.concatenate([
-                        ang_arr.reshape(-1),    # H * 3
-                        grav_arr.reshape(-1),   # H * 3
-                        cmd_arr.reshape(-1),    # H * 3
-                        jpos_arr.reshape(-1),   # H * 12
-                        jvel_arr.reshape(-1),   # H * 12
-                        act_arr.reshape(-1),    # H * 12
-                    ]).astype(np.float32)
+                obs = np.concatenate(
+                    [
+                        ang_arr.reshape(-1),
+                        grav_arr.reshape(-1),
+                        cmd_arr.reshape(-1),
+                        jpos_arr.reshape(-1),
+                        jvel_arr.reshape(-1),
+                        act_arr.reshape(-1),
+                    ],
+                    dtype=np.float32,
+                )
 
-                # ONNX inference
                 actions = sess.run([output_name], {input_name: obs[None, :]})[0][0]
+
                 processed_actions = actions[policy_to_mujoco_indices] * action_scale + default_joint_pos
+                
+                target_joint_pos  = processed_actions.copy()
 
-                target_joint_pos = processed_actions.copy()
-
-            # Debug info
             if counter % 100 == 0:
-                joint_errors = target_joint_pos - current_pos_mj
-                print(f"[{counter:4d}] "
-                      f"h={d.qpos[2]:.3f}m | "
-                      f"action=[{actions.min():6.2f}, {actions.max():6.2f}] | "
-                      f"max_err={np.max(np.abs(joint_errors)):.4f}rad | "
-                      f"max_torque={np.max(np.abs(d.ctrl[:])):.1f}Nm")
+                joint_errors = target_joint_pos - d.qpos[7:7+num_actions]
+                print(
+                    f"[{counter:4d}] "
+                    f"h={d.qpos[2]:.3f}m | "
+                    f"action=[{actions.min():6.2f}, {actions.max():6.2f}] | "
+                    f"max_err={np.max(np.abs(joint_errors)):.4f}rad | "
+                    f"max_torque={np.max(np.abs(d.ctrl[:])):.1f}Nm"
+                )
+                # print(obs)
 
             counter += 1
             viewer.sync()
 
-            # Time keeping
             time_until_next_step = m.opt.timestep - (time.time() - step_start)
             if time_until_next_step > 0:
                 time.sleep(time_until_next_step)

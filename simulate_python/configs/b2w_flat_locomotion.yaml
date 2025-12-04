@@ -1,0 +1,39 @@
+policy_path: "exported_policy/b2w_flat_locomotion/policy.onnx"
+xml_path: "unitree_robots/b2w/ground.xml"
+
+# Simulation settings
+simulation_duration: 60.0
+simulation_dt: 0.005
+control_decimation: 4
+
+# Sequence: in mujoco order - FL, FR, RL, RR
+# For each leg: hip, thigh, calf, foot
+default_joint_pos: [
+  0.1,  0.8, -1.5, 0.0,
+  -0.1, 0.8, -1.5, 0.0,
+  0.1,  1.0, -1.5, 0.0,  
+  -0.1, 1.0, -1.5, 0.0   
+]
+
+# PD gains
+kps: [
+  160.0, 160.0, 160.0, 0.0,
+  160.0, 160.0, 160.0, 0.0,
+  160.0, 160.0, 160.0, 0.0,
+  160.0, 160.0, 160.0, 0.0
+]
+
+kds: [
+  5.0, 5.0, 5.0, 1.0,
+  5.0, 5.0, 5.0, 1.0,
+  5.0, 5.0, 5.0, 1.0,
+  5.0, 5.0, 5.0, 1.0
+]
+
+num_actions: 16
+leg_action_scale: 0.25
+wheel_action_scale: 5.0
+num_obs: 53
+num_history: 5
+num_commands: 3
+command: [0.7, 0.3, 0.0]  # [vx, vy, vyaw]

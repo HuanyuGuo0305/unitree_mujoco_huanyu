@@ -1,4 +1,4 @@
-policy_path: "exported_policy/b2w_flat_locomotion/policy.onnx"
+policy_path: "exported_policy/b2w_locomotion/policy_flat_3.onnx"
 xml_path: "unitree_robots/b2w/ground.xml"
 
 # Simulation settings
@@ -36,4 +36,4 @@ wheel_action_scale: 5.0
 num_obs: 53
 num_history: 5
 num_commands: 3
-command: [0.7, 0.3, 0.0]  # [vx, vy, vyaw]
+command: [0.0, 0.0, 0.0]  # [vx, vy, vyaw]

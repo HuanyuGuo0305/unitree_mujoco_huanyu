@@ -211,7 +211,7 @@ if __name__ == "__main__":
     m.opt.timestep = simulation_dt
 
     # Init robot state
-    d.qpos[0:3] = [0.0, 0.0, 0.65]
+    d.qpos[0:3] = [0.0, 0.0, 0.6]
     d.qpos[3:7] = [1.0, 0.0, 0.0, 0.0]
     d.qpos[7:7+num_actions] = default_joint_pos
     d.qvel[:3] = np.random.uniform(-0.2, 0.2, size=3)

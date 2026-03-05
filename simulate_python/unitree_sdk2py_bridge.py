@@ -47,14 +47,12 @@ class UnitreeSdk2Bridge:
         self.joystick = None
 
         # Check sensor
-        for i in range(self.dim_motor_sensor, self.mj_model.nsensor):
-            name = mujoco.mj_id2name(
-                self.mj_model, mujoco._enums.mjtObj.mjOBJ_SENSOR, i
-            )
+        for i in range(self.mj_model.nsensor):
+            name = mujoco.mj_id2name(self.mj_model, mujoco.mjtObj.mjOBJ_SENSOR, i)
             if name == "imu_quat":
-                self.have_imu_ = True
+                self.have_imu = True
             if name == "frame_pos":
-                self.have_frame_sensor_ = True
+                self.have_frame_sensor = True
 
         # Unitree sdk2 message
         self.low_state = LowState_default()
@@ -109,64 +107,40 @@ class UnitreeSdk2Bridge:
         }
 
     def LowCmdHandler(self, msg: LowCmd_):
-        if self.mj_data != None:
-            for i in range(self.num_motor):
-                self.mj_data.ctrl[i] = (
-                    msg.motor_cmd[i].tau
-                    + msg.motor_cmd[i].kp
-                    * (msg.motor_cmd[i].q - self.mj_data.sensordata[i])
-                    + msg.motor_cmd[i].kd
-                    * (
-                        msg.motor_cmd[i].dq
-                        - self.mj_data.sensordata[i + self.num_motor]
-                    )
-                )
+        if self.mj_data is None:
+            return
+        n = min(self.num_motor, len(msg.motor_cmd))
+        for i in range(n):
+            self.mj_data.ctrl[i] = (
+                msg.motor_cmd[i].tau
+                + msg.motor_cmd[i].kp * (msg.motor_cmd[i].q  - self.mj_data.sensordata[i])
+                + msg.motor_cmd[i].kd * (msg.motor_cmd[i].dq - self.mj_data.sensordata[i + self.num_motor])
+            )
 
     def PublishLowState(self):
-        if self.mj_data != None:
-            for i in range(self.num_motor):
-                self.low_state.motor_state[i].q = self.mj_data.sensordata[i]
-                self.low_state.motor_state[i].dq = self.mj_data.sensordata[
-                    i + self.num_motor
-                ]
-                self.low_state.motor_state[i].tau_est = self.mj_data.sensordata[
-                    i + 2 * self.num_motor
-                ]
+        if self.mj_data is None:
+            return
 
-            if self.have_frame_sensor_:
+        n = min(self.num_motor, len(self.low_state.motor_state))
+        for i in range(n):
+            self.low_state.motor_state[i].q = self.mj_data.sensordata[i]
+            self.low_state.motor_state[i].dq = self.mj_data.sensordata[i + self.num_motor]
+            self.low_state.motor_state[i].tau_est = self.mj_data.sensordata[i + 2*self.num_motor]
 
-                self.low_state.imu_state.quaternion[0] = self.mj_data.sensordata[
-                    self.dim_motor_sensor + 0
-                ]
-                self.low_state.imu_state.quaternion[1] = self.mj_data.sensordata[
-                    self.dim_motor_sensor + 1
-                ]
-                self.low_state.imu_state.quaternion[2] = self.mj_data.sensordata[
-                    self.dim_motor_sensor + 2
-                ]
-                self.low_state.imu_state.quaternion[3] = self.mj_data.sensordata[
-                    self.dim_motor_sensor + 3
-                ]
+            if self.have_imu:
+                base = self.dim_motor_sensor
+                self.low_state.imu_state.quaternion[0] = self.mj_data.sensordata[base + 0]
+                self.low_state.imu_state.quaternion[1] = self.mj_data.sensordata[base + 1]
+                self.low_state.imu_state.quaternion[2] = self.mj_data.sensordata[base + 2]
+                self.low_state.imu_state.quaternion[3] = self.mj_data.sensordata[base + 3]
 
-                self.low_state.imu_state.gyroscope[0] = self.mj_data.sensordata[
-                    self.dim_motor_sensor + 4
-                ]
-                self.low_state.imu_state.gyroscope[1] = self.mj_data.sensordata[
-                    self.dim_motor_sensor + 5
-                ]
-                self.low_state.imu_state.gyroscope[2] = self.mj_data.sensordata[
-                    self.dim_motor_sensor + 6
-                ]
+                self.low_state.imu_state.gyroscope[0] = self.mj_data.sensordata[base + 4]
+                self.low_state.imu_state.gyroscope[1] = self.mj_data.sensordata[base + 5]
+                self.low_state.imu_state.gyroscope[2] = self.mj_data.sensordata[base + 6]
 
-                self.low_state.imu_state.accelerometer[0] = self.mj_data.sensordata[
-                    self.dim_motor_sensor + 7
-                ]
-                self.low_state.imu_state.accelerometer[1] = self.mj_data.sensordata[
-                    self.dim_motor_sensor + 8
-                ]
-                self.low_state.imu_state.accelerometer[2] = self.mj_data.sensordata[
-                    self.dim_motor_sensor + 9
-                ]
+                self.low_state.imu_state.accelerometer[0] = self.mj_data.sensordata[base + 7]
+                self.low_state.imu_state.accelerometer[1] = self.mj_data.sensordata[base + 8]
+                self.low_state.imu_state.accelerometer[2] = self.mj_data.sensordata[base + 9]
 
             if self.joystick != None:
                 pygame.event.get()
@@ -223,27 +197,17 @@ class UnitreeSdk2Bridge:
             self.low_state_puber.Write(self.low_state)
 
     def PublishHighState(self):
+        if self.mj_data is None:
+            return
 
-        if self.mj_data != None:
-            self.high_state.position[0] = self.mj_data.sensordata[
-                self.dim_motor_sensor + 10
-            ]
-            self.high_state.position[1] = self.mj_data.sensordata[
-                self.dim_motor_sensor + 11
-            ]
-            self.high_state.position[2] = self.mj_data.sensordata[
-                self.dim_motor_sensor + 12
-            ]
-
-            self.high_state.velocity[0] = self.mj_data.sensordata[
-                self.dim_motor_sensor + 13
-            ]
-            self.high_state.velocity[1] = self.mj_data.sensordata[
-                self.dim_motor_sensor + 14
-            ]
-            self.high_state.velocity[2] = self.mj_data.sensordata[
-                self.dim_motor_sensor + 15
-            ]
+        base = self.dim_motor_sensor
+        if self.have_frame_sensor and (base + 15) < len(self.mj_data.sensordata):
+            self.high_state.position[0] = self.mj_data.sensordata[base + 10]
+            self.high_state.position[1] = self.mj_data.sensordata[base + 11]
+            self.high_state.position[2] = self.mj_data.sensordata[base + 12]
+            self.high_state.velocity[0] = self.mj_data.sensordata[base + 13]
+            self.high_state.velocity[1] = self.mj_data.sensordata[base + 14]
+            self.high_state.velocity[2] = self.mj_data.sensordata[base + 15]
 
         self.high_state_puber.Write(self.high_state)
 

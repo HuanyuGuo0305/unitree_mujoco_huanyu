@@ -4,7 +4,7 @@
   <default>
     <default class="b2">
       <geom type="mesh" />
-      <joint damping="1" armature="0.1" />
+      <joint damping="0" armature="0.1" />
       <default class="visual">
         <geom contype="0" conaffinity="0" group="2" />
       </default>
@@ -294,10 +294,10 @@
     <motor class="b2" ctrlrange="-200 200" name="RL_thigh" joint="RL_thigh_joint" />
     <motor class="b2" ctrlrange="-300 300" name="RL_calf" joint="RL_calf_joint" />
 
-    <motor class="b2" ctrlrange="-20 20" name="FR_wheel" joint="FR_wheel_joint" />
-    <motor class="b2" ctrlrange="-20 20" name="FL_wheel" joint="FL_wheel_joint" />
-    <motor class="b2" ctrlrange="-20 20" name="RR_wheel" joint="RR_wheel_joint" />
-    <motor class="b2" ctrlrange="-20 20" name="RL_wheel" joint="RL_wheel_joint" />
+    <velocity name="FR_wheel" joint="FR_wheel_joint" kv="10" ctrlrange="-50 50" forcerange="-20 20"/>
+    <velocity name="FL_wheel" joint="FL_wheel_joint" kv="10" ctrlrange="-50 50" forcerange="-20 20"/>
+    <velocity name="RR_wheel" joint="RR_wheel_joint" kv="10" ctrlrange="-50 50" forcerange="-20 20"/>
+    <velocity name="RL_wheel" joint="RL_wheel_joint" kv="10" ctrlrange="-50 50" forcerange="-20 20"/>
   </actuator>
 
   <sensor>

@@ -1,73 +1,59 @@
-# Paths
-policy_path: "exported_policy/b2wz1_loco_manipulation/policy.onnx"
+policy_path: "exported_policy/b2wz1_loco_manipulation/policy_H5.onnx"
 xml_path: "unitree_robots/b2wz1/ground.xml"
+kp_table_path: "utilities/tools/reachable_kp0kp1kp2_lb.npy"  # (N,9) in Level Base Frame
 
 # Simulation
 simulation_duration: 60.0
 simulation_dt: 0.005
 control_decimation: 4
+render: true
 
-# DOF counts
-num_actions_total: 23
-num_actions_policy: 22  # policy does NOT output gripper
+# Policy IO
+history_length: 5
+obs_dim_per_step: 89
+obs_dim: 445
+action_dim: 22  # 12 leg + 6 arm + 4 wheel (in this order)
 
-# Default joint pos in MuJoCo qpos order:
-# [FL hip, FL thigh, FL calf, FL wheel,
-#  FR hip, FR thigh, FR calf, FR wheel,
-#  RL hip, RL thigh, RL calf, RL wheel,
-#  RR hip, RR thigh, RR calf, RR wheel,
-#  joint1..joint6, jointGripper]
-default_joint_pos: [
-  0.1, 0.8, -1.5, 0.0,
- -0.1, 0.8, -1.5, 0.0,
-  0.1, 1.0, -1.5, 0.0,
- -0.1, 1.0, -1.5, 0.0,
-  0.0, 1.48, -1.0, -0.54, 0.0, 0.0,
-  0.0
-]
+# Base velocity command in policy obs
+base_command: [0.0, 0.0, 0.0]  # [vx, vy, wz]
 
-# PD gains (match IsaacLab actuator stiffness/damping)
-leg_kps: [320.0, 320.0, 320.0, 320.0, 320.0, 320.0, 320.0, 320.0, 320.0, 320.0, 320.0, 320.0]
-leg_kds: [ 10.0,  10.0,  10.0,  10.0,  10.0,  10.0,  10.0,  10.0,  10.0,  10.0,  10.0,  10.0]
-
-# wheels are velocity-servo torques in deploy (not position)
-wheel_kps: [0.0, 0.0, 0.0, 0.0]
-wheel_kds: [10.0, 10.0, 10.0, 10.0]
-
-# arm PD (Isaac z1_arm: stiffness=50, damping=8)
-arm_kps: [50.0, 50.0, 50.0, 50.0, 50.0, 50.0]
-arm_kds: [ 8.0,  8.0,  8.0,  8.0,  8.0,  8.0]
-arm_torque_limits: [30.0, 30.0, 30.0, 30.0, 30.0, 30.0]
-
-# Action scales (MUST match training ActionCfg scales)
-leg_action_scale: 0.25
-arm_action_scale: 0.50
-wheel_action_scale: 5.0
-
-# Base velocity commands (if you want fixed forward)
-base_command: [0.0, 0.0, 0.0]  # [vx, vy, vyaw]
-
-# EE keypoints (Level Base Frame: yaw-only frame)
-ee_body_name: "gripperStator"
+# EE keypoints command sampling (match training)
+ee_cmd_resampling_time_s: 1000.0
 kp_dx: 0.30
 kp_dz: 0.30
 kp0_threshold: 0.20
 rot_threshold: 0.40
-ee_kp_npy_path: "utilities/tools/reachable_kp0kp1kp2_lb.npy"
-ee_resample_time: 4.0
 
-# Observation (exported ONNX)
-num_history: 5
-num_obs: 445
+# Init root pose
+root_pos: [0.0, 0.0, 0.6017]
+root_quat_wxyz: [1.0, 0.0, 0.0, 0.0]
 
-# Gripper: torque motor, policy does not control it
-gripper_hold_torque: 0.0
+# Default joint positions - MuJoCo order
+# FL (hip thigh calf wheel), FR, RL, RR, then arm joint1..6 + jointGripper
+default_joint_pos: [
+  0.1,  0.8, -1.5, 0.0,
+ -0.1,  0.8, -1.5, 0.0,
+  0.1,  1.0, -1.5, 0.0,
+ -0.1,  1.0, -1.5, 0.0,
+  0.0,  1.48, -1.0, -0.54, 0.0, 0.0, 
+  0.0
+]
 
-# Emulate Isaac DCMotorCfg velocity_limit via ARM TARGET rate limit
-arm_velocity_limit: 3.0
+# Action scaling (match training)
+leg_action_scale: 0.25
+arm_action_scale: 0.75
+wheel_action_scale: 5.0
 
-# Wheel velocity servo params
-wheel_vel_kp: 0.0
-wheel_vel_kd: 10.0
+# PD gains (match IsaacLab actuators)
+leg_kps: [320,320,320, 320,320,320, 320,320,320, 320,320,320]
+leg_kds: [10,10,10,    10,10,10,    10,10,10,    10,10,10]
+arm_kps: [50,50,50,50,50,50]
+arm_kds: [8,8,8,8,8,8]
 
-debug_every: 200
+# Limits (match XML ctrlrange/forcerange)
+leg_torque_limits: [200.0, 200.0, 320.0]  # hip, thigh, calf
+arm_torque_limit: 30.0
+wheel_vel_limit: 50.0
+
+# Sites
+ee_site: "z1_ee"

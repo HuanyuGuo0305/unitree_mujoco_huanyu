@@ -23,11 +23,11 @@ default_joint_pos = np.array([
 ], dtype=np.float32)
 
 # Gains
-LEG_KP = 300.0
+LEG_KP = 320.0
 LEG_KD = 10.0
 
 ARM_KP = 50.0
-ARM_KD = 1.5
+ARM_KD = 8.0
 ARM_TAU_LIMIT = 30.0
 
 # Joint ordering (qpos after free joint)

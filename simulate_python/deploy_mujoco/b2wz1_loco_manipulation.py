@@ -48,8 +48,6 @@ from utilities.math import (
     quat_angle_wxyz,
     quat_from_keypoints_lb,
 )
-from utilities.mujoco_helper import site_id
-
 
 # ============================================================
 # Basic helpers
@@ -106,17 +104,6 @@ class PresampledKeypointsInterpolateCommandLBSim:
     Table format:
         npy shape = (N, 9)
         row = [kp0_xyz, kp1_xyz, kp2_xyz] in level-base frame
-
-    Logic:
-      - reset(): random sample directly
-      - resample():
-          * sample kps_s
-          * compare with previous command kps_p
-          * alpha_pos from kp0 distance threshold
-          * alpha_rot from rotation threshold
-          * alpha = min(alpha_pos, alpha_rot)
-          * if thresholds exceeded -> interpolate
-          * kp1/kp2 rebuilt from kp0_new + slerped orientation
     """
 
     def __init__(
@@ -276,11 +263,12 @@ if __name__ == "__main__":
     arm_kps = np.array(cfg["arm_kps"], dtype=np.float32)
     arm_kds = np.array(cfg["arm_kds"], dtype=np.float32)
 
-    leg_torque_limits = np.array(cfg["leg_torque_limits"], dtype=np.float32)  # [hip, thigh, calf]
+    leg_torque_limits = np.array(cfg["leg_torque_limits"], dtype=np.float32)
     arm_torque_limit = float(cfg["arm_torque_limit"])
     wheel_vel_limit = float(cfg["wheel_vel_limit"])
 
-    ee_site_name = str(cfg["ee_site"])
+    # 改成 body 名称，不再用 site
+    ee_body_name = str(cfg.get("ee_body", "gripperStator"))
 
     # command sampler config
     ee_command_path = cfg["ee_command_path"]
@@ -291,7 +279,7 @@ if __name__ == "__main__":
     ee_kp0_threshold = float(cfg.get("ee_kp0_threshold", 0.20))
     ee_rot_threshold = float(cfg.get("ee_rot_threshold", 0.40))
     ee_command_seed = int(cfg.get("ee_command_seed", 0))
-    ee_resample_interval = int(cfg.get("ee_resample_interval", 50))  # policy ticks
+    ee_resample_interval = int(cfg.get("ee_resample_interval", 50))
 
     assert obs_dim_per_step == 89, f"Expected obs_dim_per_step=89, got {obs_dim_per_step}"
     assert obs_dim == obs_dim_per_step * history_len, (
@@ -334,7 +322,11 @@ if __name__ == "__main__":
     d = mujoco.MjData(m)
     m.opt.timestep = dt
 
-    ee_sid = site_id(m, ee_site_name)
+    # 直接找 body，不再找 site
+    ee_bid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, ee_body_name)
+    if ee_bid < 0:
+        raise ValueError(f"Body not found: {ee_body_name}")
+    print(f"EE body: {ee_body_name}, body_id={ee_bid}")
 
     # --------------------------------------------------------
     # 4) Joint mapping
@@ -356,7 +348,6 @@ if __name__ == "__main__":
         "joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "jointGripper",
     ]
 
-    # policy obs joint_pos semantics
     policy_joint_pos_names = [
         "FL_hip_joint", "FR_hip_joint", "RL_hip_joint", "RR_hip_joint",
         "FL_thigh_joint", "FR_thigh_joint", "RL_thigh_joint", "RR_thigh_joint",
@@ -364,7 +355,6 @@ if __name__ == "__main__":
         "joint1", "joint2", "joint3", "joint4", "joint5", "joint6",
     ]
 
-    # policy obs joint_vel semantics
     policy_joint_vel_names = [
         "FL_hip_joint", "FR_hip_joint", "RL_hip_joint", "RR_hip_joint",
         "FL_thigh_joint", "FR_thigh_joint", "RL_thigh_joint", "RR_thigh_joint",
@@ -374,7 +364,6 @@ if __name__ == "__main__":
         "joint2", "joint3", "joint4", "joint5", "joint6",
     ]
 
-    # IMPORTANT: policy action order = leg + arm + wheel
     policy_action_semantic = [
         "FL_hip_joint", "FR_hip_joint", "RL_hip_joint", "RR_hip_joint",
         "FL_thigh_joint", "FR_thigh_joint", "RL_thigh_joint", "RR_thigh_joint",
@@ -407,7 +396,6 @@ if __name__ == "__main__":
     arm_mujoco_joint_indices = [mujoco_joint_names.index(name) for name in arm_action_joint_names]
     wheel_mujoco_joint_indices = [mujoco_joint_names.index(name) for name in wheel_action_joint_names]
 
-    # ctrl_source also uses leg + arm + wheel
     control_source_joint_names = leg_action_joint_names + arm_action_joint_names + wheel_action_joint_names
     ctrl_source_index_by_name = {name: i for i, name in enumerate(control_source_joint_names)}
     ctrl_src_indices_or_none = [
@@ -470,18 +458,17 @@ if __name__ == "__main__":
         lb_quat_w = quat_from_yaw_wxyz(yaw)
         lb_quat_w = quat_unique_wxyz(quat_normalize_wxyz(lb_quat_w))
 
-        ee_pos_w = d.site_xpos[ee_sid].copy().astype(np.float32)
-        ee_rot_w = d.site_xmat[ee_sid].reshape(3, 3).copy().astype(np.float32)
+        # 用 body pose，不再用 site pose
+        ee_pos_w = d.xpos[ee_bid].copy().astype(np.float32)
+        ee_rot_w = d.xmat[ee_bid].reshape(3, 3).copy().astype(np.float32)
         ee_quat_w = quat_from_rotmat_wxyz(ee_rot_w)
 
         ee_pos_lb = quat_apply_inverse_wxyz(lb_quat_w, ee_pos_w - base_pos_w)
         ee_quat_lb = quat_mul_wxyz(quat_conjugate_wxyz(lb_quat_w), ee_quat_w)
         ee_quat_lb = quat_unique_wxyz(quat_normalize_wxyz(ee_quat_lb))
 
-        kp_dx = ee_kp_dx
-        kp_dz = ee_kp_dz
-        off_x = np.array([kp_dx, 0.0, 0.0], dtype=np.float32)
-        off_z = np.array([0.0, 0.0, kp_dz], dtype=np.float32)
+        off_x = np.array([ee_kp_dx, 0.0, 0.0], dtype=np.float32)
+        off_z = np.array([0.0, 0.0, ee_kp_dz], dtype=np.float32)
 
         kp0 = ee_pos_lb
         kp1 = ee_pos_lb + quat_apply_wxyz(ee_quat_lb, off_x)
@@ -528,14 +515,14 @@ if __name__ == "__main__":
 
         obs = np.concatenate(
             [
-                base_ang_vel_b,      # 3
-                projected_gravity_b, # 3
-                base_cmd,            # 3
-                ee_cmd_lb,           # 9
-                ee_cur_lb,           # 9
-                joint_pos_rel,       # 18
-                joint_vel_policy,    # 22
-                last_action,         # 22
+                base_ang_vel_b,
+                projected_gravity_b,
+                base_cmd,
+                ee_cmd_lb,
+                ee_cur_lb,
+                joint_pos_rel,
+                joint_vel_policy,
+                last_action,
             ],
             dtype=np.float32,
         )
@@ -609,7 +596,6 @@ if __name__ == "__main__":
         while viewer.is_running() and sim_time < sim_duration:
             step_start = time.time()
 
-            # current states
             qpos_mujoco = d.qpos[7:7 + len(mujoco_joint_names)].copy()
             qvel_mujoco = d.qvel[6:6 + len(mujoco_joint_names)].copy()
 
@@ -619,7 +605,6 @@ if __name__ == "__main__":
             arm_pos = qpos_mujoco[arm_mujoco_joint_indices]
             arm_vel = qvel_mujoco[arm_mujoco_joint_indices]
 
-            # startup blend
             if sim_time < startup_hold_s:
                 blend = 0.0
             elif sim_time < startup_hold_s + startup_blend_s:
@@ -628,11 +613,9 @@ if __name__ == "__main__":
                 blend = 1.0
             blend = float(np.clip(blend, 0.0, 1.0))
 
-            # PD torques
             leg_tau = leg_kps * (leg_target - leg_pos) - leg_kds * leg_vel
             arm_tau = arm_kps * (arm_target - arm_pos) - arm_kds * arm_vel
 
-            # clamp
             leg_tau = np.clip(
                 leg_tau,
                 -np.repeat(leg_torque_limits, 4),
@@ -641,7 +624,6 @@ if __name__ == "__main__":
             arm_tau = np.clip(arm_tau, -arm_torque_limit, arm_torque_limit)
             wheel_ctrl = np.clip(wheel_cmd, -wheel_vel_limit, wheel_vel_limit)
 
-            # ctrl_source = leg + arm + wheel
             ctrl_source = np.concatenate(
                 [
                     leg_tau,
@@ -656,7 +638,7 @@ if __name__ == "__main__":
                 if src_i is not None:
                     d.ctrl[ctrl_i] = ctrl_source[src_i]
                 else:
-                    d.ctrl[ctrl_i] = 0.0  # gripper fixed zero
+                    d.ctrl[ctrl_i] = 0.0
 
             mujoco.mj_step(m, d)
             viewer.cam.lookat[:] = d.qpos[:3]
@@ -671,7 +653,6 @@ if __name__ == "__main__":
                     print(f"  imu_gyro  = {gyro_ang}")
                     print(f"  diff      = {qvel_ang - gyro_ang}")
 
-                # policy tick resample ee command
                 if policy_tick > 0 and (policy_tick % ee_resample_interval == 0):
                     ee_cmd_sampler.resample()
                 ee_cmd_lb_current = ee_cmd_sampler.command.copy()
@@ -728,7 +709,6 @@ if __name__ == "__main__":
 
                 last_action[:] = action
 
-                # action split: leg + arm + wheel
                 leg_act = action[leg_action_policy_indices]
                 arm_act = action[arm_action_policy_indices]
                 wheel_act = action[wheel_action_policy_indices]
@@ -773,7 +753,6 @@ if __name__ == "__main__":
             counter += 1
             viewer.sync()
 
-            # realtime sync
             time_until_next = dt - (time.time() - step_start)
             if time_until_next > 0:
                 time.sleep(time_until_next)

@@ -1,62 +1,99 @@
-policy_path: "exported_policy/b2wz1_loco_manipulation/policy_H5.onnx"
+policy_path: "exported_policy/b2wz1_loco_manipulation/policy.onnx"
 xml_path: "unitree_robots/b2wz1/ground.xml"
-
-# EE command table
-ee_command_path: "utilities/tools/reachable_kp0kp1kp2_lb.npy"  # (N,9) in Level Base Frame
 
 # Simulation
 simulation_duration: 60.0
 simulation_dt: 0.005
 control_decimation: 4
-render: true
 
-# Policy IO
-history_length: 5
+# startup smooth blend
+startup_hold_s: 1.0
+startup_blend_s: 2.0
+
+# Dimensions
+history_length: 3
 obs_dim_per_step: 89
-obs_dim: 445
-action_dim: 22  # 12 leg + 6 arm + 4 wheel (in this order)
+obs_dim: 267
+action_dim: 22
 
-# Base velocity command in policy obs
-base_command: [0.5, 0.0, 0.0]  # [vx, vy, wz]
+# Commands / root init
+base_command: [0.5, 0.0, 0.0]   # [vx, vy, wz]
 
-# EE keypoints command sampling (match training)
-ee_resample_interval: 1000
+root_pos: [0.0, 0.0, 0.6017]
+root_quat_wxyz: [1.0, 0.0, 0.0, 0.0]
+
+# Default joint position in MuJoCo order (23)
+# MuJoCo order:
+# FL_hip, FL_thigh, FL_calf, FL_wheel,
+# FR_hip, FR_thigh, FR_calf, FR_wheel,
+# RL_hip, RL_thigh, RL_calf, RL_wheel,
+# RR_hip, RR_thigh, RR_calf, RR_wheel,
+# joint1, joint2, joint3, joint4, joint5, joint6, jointGripper
+default_joint_pos: [
+   0.1, 0.8, -1.5, 0.0,
+  -0.1, 0.8, -1.5, 0.0,
+   0.1, 1.0, -1.5, 0.0,
+  -0.1, 1.0, -1.5, 0.0,
+   0.0, 1.48, -1.0, -0.54, 0.0, 0.0, 0.0
+]
+
+# Joint gains in MuJoCo order (23)
+# wheels are velocity-controlled, kp is unused, kd kept for convenience
+kps: [
+  160.0, 160.0, 160.0,   0.0,
+  160.0, 160.0, 160.0,   0.0,
+  160.0, 160.0, 160.0,   0.0,
+  160.0, 160.0, 160.0,   0.0,
+   40.0,  40.0,  40.0,  40.0,  40.0,  40.0,  40.0
+]
+
+kds: [
+   5.0,   5.0,   5.0,  10.0,
+   5.0,   5.0,   5.0,  10.0,
+   5.0,   5.0,   5.0,  10.0,
+   5.0,   5.0,   5.0,  10.0,
+   3.0,   3.0,   3.0,   3.0,   3.0,   3.0,   3.0
+]
+
+# Action scales
+# policy action order:
+#   leg(12) + arm(6) + wheel(4)
+#
+# arm order:
+#   joint1, joint2, joint3, joint4, joint5, joint6
+leg_action_scale: 0.25
+arm_action_scale: [0.25, 0.40, 0.25, 0.25, 0.25, 0.20]
+wheel_action_scale: 4.0
+
+# Control limits
+leg_torque_limits: [
+  200.0, 200.0, 320.0,
+  200.0, 200.0, 320.0,
+  200.0, 200.0, 320.0,
+  200.0, 200.0, 320.0
+]
+
+# joint2 = 60, others = 30
+arm_torque_limits: [30.0, 60.0, 30.0, 30.0, 30.0, 30.0]
+gripper_torque_limit: 30.0
+
+wheel_velocity_limits: [50.0, 50.0, 50.0, 50.0]
+
+# EE command sampler
+ee_body: "gripperStator"
+ee_command_path: "utilities/tools/reachable_kp0kp1kp2_lb.npy"
 ee_kp_dx: 0.30
 ee_kp_dz: 0.30
 ee_kp0_threshold: 0.20
 ee_rot_threshold: 0.40
 ee_command_seed: 0
 
-# Init root pose
-root_pos: [0.0, 0.0, 0.6017]
-root_quat_wxyz: [1.0, 0.0, 0.0, 0.0]
+ee_resample_interval: 200
 
-# Default joint positions - MuJoCo order
-# FL (hip thigh calf wheel), FR, RL, RR, then arm joint1..6 + jointGripper
-default_joint_pos: [
-  0.1,  0.8, -1.5, 0.0,
- -0.1,  0.8, -1.5, 0.0,
-  0.1,  1.0, -1.5, 0.0,
- -0.1,  1.0, -1.5, 0.0,
-  0.0,  1.48, -1.0, -0.54, 0.0, 0.0,
-  0.0
-]
-
-# Action scaling (match training)
-leg_action_scale: 0.25
-arm_action_scale: 0.75
-wheel_action_scale: 5.0
-
-# PD gains
-leg_kps: [320,320,320, 320,320,320, 320,320,320, 320,320,320]
-leg_kds: [10,10,10,    10,10,10,    10,10,10,    10,10,10]
-arm_kps: [50,50,50,50,50,50]
-arm_kds: [8,8,8,8,8,8]
-
-# Limits
-leg_torque_limits: [200.0, 200.0, 320.0]
-arm_torque_limit: 30.0
-wheel_vel_limit: 50.0
-
-# Sites
-ee_site: "z1_ee"
+# visualization
+vis_ee_target: true
+vis_ee_target_axis_len: 0.20
+vis_ee_target_axis_radius: 0.01
+vis_ee_target_sphere_size: 0.03
+vis_ee_target_alpha: 0.9
+vis_ee_target_show_current: true

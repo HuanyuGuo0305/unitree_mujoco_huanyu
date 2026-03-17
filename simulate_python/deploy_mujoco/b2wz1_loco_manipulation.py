@@ -1,5 +1,5 @@
 """
-Sim2sim test for B2WZ1 loco-manipulation ONNX policy in MuJoCo.
+Sim2sim deployment for B2WZ1 loco-manipulation ONNX policy in MuJoCo.
 
 Run from simulate_python/:
 
@@ -28,7 +28,7 @@ import numpy as np
 import onnxruntime as ort
 import yaml
 
-# Add project root directory to sys.path
+# Add project root to sys.path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
 sys.path.insert(0, project_root)
 
@@ -43,68 +43,65 @@ from utilities.math import (
     quat_unique_wxyz,
     euler_xyz_from_quat_wxyz,
     quat_from_yaw_wxyz,
-    normalize,
     quat_slerp_wxyz,
     quat_angle_wxyz,
     quat_from_keypoints_lb,
 )
 
+
 # ============================================================
-# Basic helpers
+# Helpers
 # ============================================================
 
 def get_sensor_slice(model: mujoco.MjModel, data: mujoco.MjData, sensor_name: str) -> np.ndarray:
-    """Read one sensor by name."""
     sid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SENSOR, sensor_name)
     if sid < 0:
         raise ValueError(f"Sensor not found: {sensor_name}")
     adr = model.sensor_adr[sid]
     dim = model.sensor_dim[sid]
-    return data.sensordata[adr : adr + dim].copy()
+    return data.sensordata[adr: adr + dim].copy()
 
 
-def debug_print_obs(tag: str, obs_step: np.ndarray):
-    i = 0
-    base_ang_vel_b = obs_step[i:i + 3]; i += 3
-    projected_gravity_b = obs_step[i:i + 3]; i += 3
-    base_cmd = obs_step[i:i + 3]; i += 3
-    ee_cmd_lb = obs_step[i:i + 9]; i += 9
-    ee_cur_lb = obs_step[i:i + 9]; i += 9
-    joint_pos_rel = obs_step[i:i + 18]; i += 18
-    joint_vel = obs_step[i:i + 22]; i += 22
-    last_action = obs_step[i:i + 22]; i += 22
+def make_arrow_mat(direction: np.ndarray, up_hint: np.ndarray = None) -> np.ndarray:
+    """
+    Build a rotation matrix whose local +Z axis aligns with `direction`.
+    This is suitable for mjGEOM_ARROW / mjGEOM_CAPSULE if we place the geom
+    at the midpoint and stretch it along local z.
+    """
+    direction = np.asarray(direction, dtype=np.float64)
+    norm = np.linalg.norm(direction)
+    if norm < 1e-8:
+        return np.eye(3, dtype=np.float64)
 
-    print(f"\n[DEBUG {tag}]")
-    print(f"  base_ang_vel_b      : {base_ang_vel_b}")
-    print(f"  projected_gravity_b : {projected_gravity_b}")
-    print(f"  base_cmd            : {base_cmd}")
-    print(f"  ee_cmd_lb kp0       : {ee_cmd_lb[0:3]}")
-    print(f"  ee_cmd_lb kp1       : {ee_cmd_lb[3:6]}")
-    print(f"  ee_cmd_lb kp2       : {ee_cmd_lb[6:9]}")
-    print(f"  ee_cur_lb kp0       : {ee_cur_lb[0:3]}")
-    print(f"  ee_cur_lb kp1       : {ee_cur_lb[3:6]}")
-    print(f"  ee_cur_lb kp2       : {ee_cur_lb[6:9]}")
-    print(f"  joint_pos_rel       : {joint_pos_rel}")
-    print(f"  joint_vel           : {joint_vel}")
-    print(f"  last_action         : {last_action}")
-    print(f"  |joint_pos_rel|max  : {np.abs(joint_pos_rel).max()}")
-    print(f"  |joint_vel|max      : {np.abs(joint_vel).max()}")
-    print(f"  |last_action|max    : {np.abs(last_action).max()}")
+    z_axis = direction / norm
+
+    if up_hint is None:
+        up_hint = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+
+    # Avoid degeneracy when z_axis is close to up_hint
+    if abs(np.dot(z_axis, up_hint)) > 0.95:
+        up_hint = np.array([0.0, 1.0, 0.0], dtype=np.float64)
+
+    x_axis = np.cross(up_hint, z_axis)
+    x_norm = np.linalg.norm(x_axis)
+    if x_norm < 1e-8:
+        x_axis = np.array([1.0, 0.0, 0.0], dtype=np.float64)
+    else:
+        x_axis /= x_norm
+
+    y_axis = np.cross(z_axis, x_axis)
+    y_axis /= max(np.linalg.norm(y_axis), 1e-8)
+
+    mat = np.column_stack([x_axis, y_axis, z_axis])
+    return mat.astype(np.float64)
 
 
 # ============================================================
-# IsaacLab-style EE command sampler (single-env NumPy version)
+# IsaacLab-style EE keypoint command sampler (single-env numpy)
 # ============================================================
 
 class PresampledKeypointsInterpolateCommandLBSim:
-    """
-    Single-environment NumPy implementation of IsaacLab's
-    PresampledKeypointsInterpolateCommandLB.
-
-    Table format:
-        npy shape = (N, 9)
-        row = [kp0_xyz, kp1_xyz, kp2_xyz] in level-base frame
-    """
+    """Single-environment NumPy version of PresampledKeypointsInterpolateCommandLB."""
 
     def __init__(
         self,
@@ -117,10 +114,7 @@ class PresampledKeypointsInterpolateCommandLBSim:
     ):
         arr = np.load(file_path).astype(np.float32)
         if arr.ndim != 2 or arr.shape[1] != 9:
-            raise ValueError(
-                f"[PresampledKeypointsInterpolateCommandLBSim] "
-                f"Expected npy shape (N,9), got {arr.shape} from '{file_path}'."
-            )
+            raise ValueError(f"Expected npy shape (N,9), got {arr.shape} from '{file_path}'.")
 
         self._table = arr
         self._num_rows = int(arr.shape[0])
@@ -131,24 +125,15 @@ class PresampledKeypointsInterpolateCommandLBSim:
         self._rot_threshold = float(rot_threshold)
 
         self._rng = np.random.default_rng(seed)
-
         self.keypoints_command_lb = np.zeros(9, dtype=np.float32)
         self._has_cmd = False
-
-    def __str__(self) -> str:
-        msg = "PresampledKeypointsInterpolateCommandLBSim:\n"
-        msg += f"  table rows      : {self._num_rows}\n"
-        msg += f"  kp_dx / kp_dz   : {self._dx:.3f} / {self._dz:.3f}\n"
-        msg += f"  kp0_threshold   : {self._kp0_threshold:.3f} m\n"
-        msg += f"  rot_threshold   : {self._rot_threshold:.3f} rad\n"
-        return msg
 
     @property
     def command(self) -> np.ndarray:
         return self.keypoints_command_lb.copy()
 
-    def _pick_indices(self, k: int) -> np.ndarray:
-        return self._rng.integers(0, self._num_rows, size=(k,), endpoint=False)
+    def _pick_index(self) -> int:
+        return int(self._rng.integers(0, self._num_rows))
 
     @staticmethod
     def _split_kps(kps_9: np.ndarray):
@@ -159,7 +144,7 @@ class PresampledKeypointsInterpolateCommandLBSim:
 
     @staticmethod
     def _pack_kps(kp0: np.ndarray, kp1: np.ndarray, kp2: np.ndarray) -> np.ndarray:
-        return np.concatenate([kp0, kp1, kp2], dtype=np.float32)
+        return np.concatenate([kp0, kp1, kp2]).astype(np.float32)
 
     def _kps_from_pose(self, kp0: np.ndarray, quat: np.ndarray):
         off_x = np.array([self._dx, 0.0, 0.0], dtype=np.float32)
@@ -168,43 +153,50 @@ class PresampledKeypointsInterpolateCommandLBSim:
         kp2 = kp0 + quat_apply_wxyz(quat, off_z)
         return kp1.astype(np.float32), kp2.astype(np.float32)
 
-    def reset(self):
-        idx = int(self._pick_indices(1)[0])
-        self.keypoints_command_lb = self._table[idx].copy()
-        self._has_cmd = True
+    def _compute_next_from_reference(self, ref_kps_lb: np.ndarray, sampled_kps_lb: np.ndarray) -> np.ndarray:
+        kp0_s, kp1_s, kp2_s = self._split_kps(sampled_kps_lb)
+        kp0_r, kp1_r, kp2_r = self._split_kps(ref_kps_lb)
 
-    def resample(self):
-        idx = int(self._pick_indices(1)[0])
-        kps_s = self._table[idx].copy()
-
-        if not self._has_cmd:
-            self.keypoints_command_lb = kps_s
-            self._has_cmd = True
-            return
-
-        kp0_s, kp1_s, kp2_s = self._split_kps(kps_s)
-        kp0_p, kp1_p, kp2_p = self._split_kps(self.keypoints_command_lb)
-
-        quat_p = quat_from_keypoints_lb(kp0_p, kp1_p, kp2_p, self._dx, self._dz)
+        quat_r = quat_from_keypoints_lb(kp0_r, kp1_r, kp2_r, self._dx, self._dz)
         quat_s = quat_from_keypoints_lb(kp0_s, kp1_s, kp2_s, self._dx, self._dz)
 
-        delta = kp0_s - kp0_p
+        delta = kp0_s - kp0_r
         dist = max(float(np.linalg.norm(delta)), 1e-8)
         alpha_pos = min(self._kp0_threshold / dist, 1.0)
 
-        ang = max(quat_angle_wxyz(quat_p, quat_s), 1e-8)
+        ang = max(float(quat_angle_wxyz(quat_r, quat_s)), 1e-8)
         alpha_rot = min(self._rot_threshold / ang, 1.0)
 
         alpha = min(alpha_pos, alpha_rot)
+        within = (dist <= self._kp0_threshold) and (ang <= self._rot_threshold)
+        alpha_eff = 1.0 if within else alpha
 
-        need_interp = (dist > self._kp0_threshold) or (ang > self._rot_threshold)
-        alpha_eff = alpha if need_interp else 1.0
-
-        kp0_new = kp0_p + alpha_eff * delta
-        quat_new = quat_slerp_wxyz(quat_p, quat_s, float(alpha_eff))
+        kp0_new = kp0_r + alpha_eff * delta
+        quat_new = quat_slerp_wxyz(quat_r, quat_s, float(alpha_eff))
         kp1_new, kp2_new = self._kps_from_pose(kp0_new, quat_new)
 
-        self.keypoints_command_lb = self._pack_kps(kp0_new, kp1_new, kp2_new)
+        return self._pack_kps(kp0_new, kp1_new, kp2_new)
+
+    def reset(self, initial_kps_lb: np.ndarray, sample_first: bool = True):
+        initial_kps_lb = np.asarray(initial_kps_lb, dtype=np.float32).reshape(9,)
+        self.keypoints_command_lb = initial_kps_lb.copy()
+        self._has_cmd = True
+
+        if sample_first:
+            sampled = self._table[self._pick_index()].copy()
+            self.keypoints_command_lb = self._compute_next_from_reference(
+                ref_kps_lb=initial_kps_lb,
+                sampled_kps_lb=sampled,
+            )
+
+    def resample(self):
+        if not self._has_cmd:
+            raise RuntimeError("Command sampler not initialized. Call reset() first.")
+        sampled = self._table[self._pick_index()].copy()
+        self.keypoints_command_lb = self._compute_next_from_reference(
+            ref_kps_lb=self.keypoints_command_lb,
+            sampled_kps_lb=sampled,
+        )
 
 
 # ============================================================
@@ -213,7 +205,7 @@ class PresampledKeypointsInterpolateCommandLBSim:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("yaml_path", type=str, help="path to b2wz1_loco_manipulation.yaml")
+    parser.add_argument("yaml_path", type=str, help="Path to yaml config")
     parser.add_argument(
         "--mode",
         type=str,
@@ -238,63 +230,81 @@ if __name__ == "__main__":
     if not os.path.isabs(xml_path):
         xml_path = os.path.abspath(os.path.join(project_root, xml_path))
 
-    sim_duration = float(cfg["simulation_duration"])
-    dt = float(cfg["simulation_dt"])
-    decim = int(cfg["control_decimation"])
+    simulation_duration = float(cfg["simulation_duration"])
+    simulation_dt = float(cfg["simulation_dt"])
+    control_decimation = int(cfg["control_decimation"])
 
-    history_len = int(cfg["history_length"])
+    history_length = int(cfg["history_length"])
     obs_dim_per_step = int(cfg["obs_dim_per_step"])
     obs_dim = int(cfg["obs_dim"])
-    act_dim = int(cfg["action_dim"])
+    action_dim = int(cfg["action_dim"])
 
-    base_cmd = np.array(cfg["base_command"], dtype=np.float32)
+    base_command = np.array(cfg["base_command"], dtype=np.float32)
 
     root_pos = np.array(cfg["root_pos"], dtype=np.float32)
     root_quat = np.array(cfg["root_quat_wxyz"], dtype=np.float32)
 
     default_joint_pos = np.array(cfg["default_joint_pos"], dtype=np.float32)
+    kps = np.array(cfg["kps"], dtype=np.float32)
+    kds = np.array(cfg["kds"], dtype=np.float32)
 
-    leg_scale = float(cfg["leg_action_scale"])
-    arm_scale = float(cfg["arm_action_scale"])
-    wheel_scale = float(cfg["wheel_action_scale"])
-
-    leg_kps = np.array(cfg["leg_kps"], dtype=np.float32)
-    leg_kds = np.array(cfg["leg_kds"], dtype=np.float32)
-    arm_kps = np.array(cfg["arm_kps"], dtype=np.float32)
-    arm_kds = np.array(cfg["arm_kds"], dtype=np.float32)
+    leg_action_scale = float(cfg["leg_action_scale"])
+    arm_action_scale = np.array(cfg["arm_action_scale"], dtype=np.float32)
+    wheel_action_scale = float(cfg["wheel_action_scale"])
 
     leg_torque_limits = np.array(cfg["leg_torque_limits"], dtype=np.float32)
-    arm_torque_limit = float(cfg["arm_torque_limit"])
-    wheel_vel_limit = float(cfg["wheel_vel_limit"])
+    arm_torque_limits = np.array(cfg["arm_torque_limits"], dtype=np.float32)
+    gripper_torque_limit = float(cfg.get("gripper_torque_limit", 30.0))
+    wheel_velocity_limits = np.array(cfg["wheel_velocity_limits"], dtype=np.float32)
 
-    # 改成 body 名称，不再用 site
     ee_body_name = str(cfg.get("ee_body", "gripperStator"))
-
-    # command sampler config
     ee_command_path = cfg["ee_command_path"]
     if not os.path.isabs(ee_command_path):
         ee_command_path = os.path.abspath(os.path.join(project_root, ee_command_path))
+
     ee_kp_dx = float(cfg.get("ee_kp_dx", 0.30))
     ee_kp_dz = float(cfg.get("ee_kp_dz", 0.30))
     ee_kp0_threshold = float(cfg.get("ee_kp0_threshold", 0.20))
     ee_rot_threshold = float(cfg.get("ee_rot_threshold", 0.40))
     ee_command_seed = int(cfg.get("ee_command_seed", 0))
-    ee_resample_interval = int(cfg.get("ee_resample_interval", 50))
+    ee_resample_interval = int(cfg.get("ee_resample_interval", 400))
+
+    startup_hold_s = float(cfg.get("startup_hold_s", 1.0))
+    startup_blend_s = float(cfg.get("startup_blend_s", 2.0))
+
+    # Visualization config
+    vis_ee_target = bool(cfg.get("vis_ee_target", True))
+    vis_ee_target_axis_len = float(cfg.get("vis_ee_target_axis_len", 0.20))
+    vis_ee_target_axis_radius = float(cfg.get("vis_ee_target_axis_radius", 0.01))
+    vis_ee_target_sphere_size = float(cfg.get("vis_ee_target_sphere_size", 0.03))
+    vis_ee_target_alpha = float(cfg.get("vis_ee_target_alpha", 0.9))
+    vis_ee_target_show_current = bool(cfg.get("vis_ee_target_show_current", True))
 
     assert obs_dim_per_step == 89, f"Expected obs_dim_per_step=89, got {obs_dim_per_step}"
-    assert obs_dim == obs_dim_per_step * history_len, (
-        f"Expected obs_dim={obs_dim_per_step * history_len}, got {obs_dim}"
-    )
-    assert act_dim == 22, f"Expected act_dim=22, got {act_dim}"
+    assert obs_dim == obs_dim_per_step * history_length, f"Expected obs_dim={obs_dim_per_step * history_length}, got {obs_dim}"
+    assert action_dim == 22, f"Expected action_dim=22, got {action_dim}"
+    assert len(default_joint_pos) == 23
+    assert len(kps) == 23
+    assert len(kds) == 23
+    assert len(leg_torque_limits) == 12
+    assert len(arm_torque_limits) == 6
+    assert len(wheel_velocity_limits) == 4
+    assert arm_action_scale.shape == (6,), f"Expected arm_action_scale shape (6,), got {arm_action_scale.shape}"
 
-    print("=" * 70)
-    print("B2WZ1 Loco-Manip - ONNX Policy (MuJoCo sim2sim)")
-    print("=" * 70)
-    print(f"Mode:   {args.mode}")
-    print(f"Policy: {policy_path}")
-    print(f"XML:    {xml_path}")
-    print(f"Control freq: {1.0 / (dt * decim):.1f} Hz")
-    print("=" * 70)
+    print("=" * 72)
+    print("B2WZ1 Loco-Manipulation - ONNX Policy (MuJoCo sim2sim)")
+    print("=" * 72)
+    print(f"Mode:            {args.mode}")
+    print(f"Policy:          {policy_path}")
+    print(f"XML:             {xml_path}")
+    print(f"Control freq:    {1.0 / (simulation_dt * control_decimation):.1f} Hz")
+    print(f"Obs per step:    {obs_dim_per_step}")
+    print(f"Obs stacked dim: {obs_dim}")
+    print(f"Action dim:      {action_dim}")
+    print(f"Arm scales:      {arm_action_scale}")
+    print(f"EE resample int: {ee_resample_interval}")
+    print(f"Vis EE target:   {vis_ee_target}")
+    print("=" * 72)
 
     use_policy = args.mode in ["lock-arm-policy", "full-policy"]
 
@@ -309,24 +319,22 @@ if __name__ == "__main__":
         input_name = sess.get_inputs()[0].name
         output_name = sess.get_outputs()[0].name
         print("ONNX loaded:")
-        print(" input :", input_name, sess.get_inputs()[0].shape)
-        print(" output:", output_name, sess.get_outputs()[0].shape)
+        print("  input :", input_name, sess.get_inputs()[0].shape)
+        print("  output:", output_name, sess.get_outputs()[0].shape)
     else:
         print("Policy disabled in pd-stand mode.")
-    print("=" * 70)
+    print("=" * 72)
 
     # --------------------------------------------------------
     # 3) Load MuJoCo model
     # --------------------------------------------------------
     m = mujoco.MjModel.from_xml_path(xml_path)
     d = mujoco.MjData(m)
-    m.opt.timestep = dt
+    m.opt.timestep = simulation_dt
 
-    # 直接找 body，不再找 site
     ee_bid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, ee_body_name)
     if ee_bid < 0:
         raise ValueError(f"Body not found: {ee_body_name}")
-    print(f"EE body: {ee_body_name}, body_id={ee_bid}")
 
     # --------------------------------------------------------
     # 4) Joint mapping
@@ -348,90 +356,77 @@ if __name__ == "__main__":
         "joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "jointGripper",
     ]
 
-    policy_joint_pos_names = [
+    # Policy order
+    leg_joint_names = [
         "FL_hip_joint", "FR_hip_joint", "RL_hip_joint", "RR_hip_joint",
         "FL_thigh_joint", "FR_thigh_joint", "RL_thigh_joint", "RR_thigh_joint",
         "FL_calf_joint", "FR_calf_joint", "RL_calf_joint", "RR_calf_joint",
+    ]
+    arm_joint_names = [
         "joint1", "joint2", "joint3", "joint4", "joint5", "joint6",
     ]
-
-    policy_joint_vel_names = [
-        "FL_hip_joint", "FR_hip_joint", "RL_hip_joint", "RR_hip_joint",
-        "FL_thigh_joint", "FR_thigh_joint", "RL_thigh_joint", "RR_thigh_joint",
-        "FL_calf_joint", "FR_calf_joint", "RL_calf_joint", "RR_calf_joint",
-        "joint1",
-        "FL_wheel_joint", "FR_wheel_joint", "RL_wheel_joint", "RR_wheel_joint",
-        "joint2", "joint3", "joint4", "joint5", "joint6",
+    wheel_joint_names = [
+        "FL_foot_joint", "FR_foot_joint", "RL_foot_joint", "RR_foot_joint",
     ]
 
-    policy_action_semantic = [
-        "FL_hip_joint", "FR_hip_joint", "RL_hip_joint", "RR_hip_joint",
-        "FL_thigh_joint", "FR_thigh_joint", "RL_thigh_joint", "RR_thigh_joint",
-        "FL_calf_joint", "FR_calf_joint", "RL_calf_joint", "RR_calf_joint",
-        "joint1", "joint2", "joint3", "joint4", "joint5", "joint6",
-        "FL_wheel_joint", "FR_wheel_joint", "RL_wheel_joint", "RR_wheel_joint",
-    ]
-    assert len(policy_action_semantic) == act_dim
+    rl_to_mujoco_name = {
+        "FL_foot_joint": "FL_wheel_joint",
+        "FR_foot_joint": "FR_wheel_joint",
+        "RL_foot_joint": "RL_wheel_joint",
+        "RR_foot_joint": "RR_wheel_joint",
+    }
 
-    leg_action_joint_names = policy_action_semantic[:12]
-    arm_action_joint_names = policy_action_semantic[12:18]
-    wheel_action_joint_names = policy_action_semantic[18:22]
+    def rl_name_to_mujoco_name(name: str) -> str:
+        return rl_to_mujoco_name.get(name, name)
 
-    num_leg_joints = 12
-    num_arm_joints = 6
-    num_wheel_joints = 4
+    policy_joint_pos_names = leg_joint_names + arm_joint_names
+    policy_joint_vel_names = leg_joint_names + arm_joint_names + wheel_joint_names
+    policy_action_names = leg_joint_names + arm_joint_names + wheel_joint_names
 
-    leg_action_policy_indices = list(range(12))
-    arm_action_policy_indices = list(range(12, 18))
-    wheel_action_policy_indices = list(range(18, 22))
+    assert len(policy_joint_pos_names) == 18
+    assert len(policy_joint_vel_names) == 22
+    assert len(policy_action_names) == 22
 
-    mujoco_to_policy_joint_pos_indices = [
-        mujoco_joint_names.index(name) for name in policy_joint_pos_names
-    ]
-    mujoco_to_policy_joint_vel_indices = [
-        mujoco_joint_names.index(name) for name in policy_joint_vel_names
-    ]
+    policy_joint_pos_mujoco_names = [rl_name_to_mujoco_name(n) for n in policy_joint_pos_names]
+    policy_joint_vel_mujoco_names = [rl_name_to_mujoco_name(n) for n in policy_joint_vel_names]
 
-    leg_mujoco_joint_indices = [mujoco_joint_names.index(name) for name in leg_action_joint_names]
-    arm_mujoco_joint_indices = [mujoco_joint_names.index(name) for name in arm_action_joint_names]
-    wheel_mujoco_joint_indices = [mujoco_joint_names.index(name) for name in wheel_action_joint_names]
+    policy_joint_pos_mujoco_indices = [mujoco_joint_names.index(n) for n in policy_joint_pos_mujoco_names]
+    policy_joint_vel_mujoco_indices = [mujoco_joint_names.index(n) for n in policy_joint_vel_mujoco_names]
 
-    control_source_joint_names = leg_action_joint_names + arm_action_joint_names + wheel_action_joint_names
+    leg_mujoco_indices = [mujoco_joint_names.index(rl_name_to_mujoco_name(n)) for n in leg_joint_names]
+    arm_mujoco_indices = [mujoco_joint_names.index(n) for n in arm_joint_names]
+    wheel_mujoco_indices = [mujoco_joint_names.index(rl_name_to_mujoco_name(n)) for n in wheel_joint_names]
+    gripper_mujoco_index = mujoco_joint_names.index("jointGripper")
+
+    leg_action_indices = list(range(0, 12))
+    arm_action_indices = list(range(12, 18))
+    wheel_action_indices = list(range(18, 22))
+
+    control_source_joint_names = (
+        [mujoco_joint_names[i] for i in leg_mujoco_indices]
+        + [mujoco_joint_names[i] for i in arm_mujoco_indices]
+        + [mujoco_joint_names[i] for i in wheel_mujoco_indices]
+        + ["jointGripper"]
+    )
+
     ctrl_source_index_by_name = {name: i for i, name in enumerate(control_source_joint_names)}
     ctrl_src_indices_or_none = [
         ctrl_source_index_by_name[name] if name in ctrl_source_index_by_name else None
         for name in ctrl_joint_names
     ]
 
-    assert len(default_joint_pos) == len(mujoco_joint_names), (
-        f"default_joint_pos length mismatch: {len(default_joint_pos)} vs {len(mujoco_joint_names)}"
-    )
-
-    default_joint_pos_policy_jointpos = default_joint_pos[mujoco_to_policy_joint_pos_indices]
-
-    default_leg_pos_policy = np.array(
-        [default_joint_pos[mujoco_joint_names.index(name)] for name in leg_action_joint_names],
-        dtype=np.float32,
-    )
-    default_arm_pos_policy = np.array(
-        [default_joint_pos[mujoco_joint_names.index(name)] for name in arm_action_joint_names],
-        dtype=np.float32,
-    )
-    default_wheel_pos_policy = np.array(
-        [default_joint_pos[mujoco_joint_names.index(name)] for name in wheel_action_joint_names],
-        dtype=np.float32,
-    )
+    default_joint_pos_policy_pos = default_joint_pos[policy_joint_pos_mujoco_indices]
+    default_leg_pos = default_joint_pos[leg_mujoco_indices]
+    default_arm_pos = default_joint_pos[arm_mujoco_indices]
+    default_gripper_pos = float(default_joint_pos[gripper_mujoco_index])
 
     print("Joint mapping:")
-    print(f" MuJoCo joint order         : {mujoco_joint_names}\n")
-    print(f" Ctrl joint order           : {ctrl_joint_names}\n")
-    print(f" Policy joint_pos order     : {policy_joint_pos_names}\n")
-    print(f" Policy joint_vel order     : {policy_joint_vel_names}\n")
-    print(f" Policy action semantic     : {policy_action_semantic}\n")
-    print(f" default_leg_pos_policy     : {default_leg_pos_policy}")
-    print(f" default_arm_pos_policy     : {default_arm_pos_policy}")
-    print(f" default_wheel_pos_policy   : {default_wheel_pos_policy}")
-    print("=" * 70)
+    print(f"  MuJoCo qpos order      : {mujoco_joint_names}")
+    print(f"  MuJoCo ctrl order      : {ctrl_joint_names}")
+    print(f"  Policy joint_pos order : {policy_joint_pos_names}")
+    print(f"  Policy joint_vel order : {policy_joint_vel_names}")
+    print(f"  Policy action order    : {policy_action_names}")
+    print("=" * 72)
 
     # --------------------------------------------------------
     # 5) Initialize state
@@ -448,7 +443,7 @@ if __name__ == "__main__":
     print(f"Initialized height z = {d.qpos[2]:.3f} m")
 
     # --------------------------------------------------------
-    # 6) EE current keypoints in level-base frame
+    # 6) Compute current EE keypoints in level-base frame
     # --------------------------------------------------------
     def compute_ee_current_kp_lb() -> np.ndarray:
         base_pos_w = d.qpos[0:3].copy().astype(np.float32)
@@ -458,7 +453,6 @@ if __name__ == "__main__":
         lb_quat_w = quat_from_yaw_wxyz(yaw)
         lb_quat_w = quat_unique_wxyz(quat_normalize_wxyz(lb_quat_w))
 
-        # 用 body pose，不再用 site pose
         ee_pos_w = d.xpos[ee_bid].copy().astype(np.float32)
         ee_rot_w = d.xmat[ee_bid].reshape(3, 3).copy().astype(np.float32)
         ee_quat_w = quat_from_rotmat_wxyz(ee_rot_w)
@@ -475,6 +469,139 @@ if __name__ == "__main__":
         kp2 = ee_pos_lb + quat_apply_wxyz(ee_quat_lb, off_z)
         return np.concatenate([kp0, kp1, kp2]).astype(np.float32)
 
+    def get_level_base_pose_world():
+        """Return level-base origin/orientation in world frame."""
+        base_pos_w = d.qpos[0:3].copy().astype(np.float32)
+        base_quat_w = quat_unique_wxyz(d.qpos[3:7].copy().astype(np.float32))
+
+        _, _, yaw = euler_xyz_from_quat_wxyz(base_quat_w)
+        lb_quat_w = quat_from_yaw_wxyz(yaw)
+        lb_quat_w = quat_unique_wxyz(quat_normalize_wxyz(lb_quat_w))
+        return base_pos_w, lb_quat_w
+
+    def ee_kp_lb_to_world(ee_kp_lb: np.ndarray):
+        """Convert EE keypoints from level-base frame to world frame."""
+        base_pos_w, lb_quat_w = get_level_base_pose_world()
+
+        kp0_lb = ee_kp_lb[0:3].astype(np.float32)
+        kp1_lb = ee_kp_lb[3:6].astype(np.float32)
+        kp2_lb = ee_kp_lb[6:9].astype(np.float32)
+
+        kp0_w = base_pos_w + quat_apply_wxyz(lb_quat_w, kp0_lb)
+        kp1_w = base_pos_w + quat_apply_wxyz(lb_quat_w, kp1_lb)
+        kp2_w = base_pos_w + quat_apply_wxyz(lb_quat_w, kp2_lb)
+
+        return kp0_w, kp1_w, kp2_w
+
+    def add_capsule_to_scene(scene, p0, p1, radius, rgba):
+        """
+        Add a capsule between p0 and p1 to the user scene.
+        """
+        if scene.ngeom >= scene.maxgeom:
+            return
+
+        p0 = np.asarray(p0, dtype=np.float64)
+        p1 = np.asarray(p1, dtype=np.float64)
+        diff = p1 - p0
+        length = np.linalg.norm(diff)
+        if length < 1e-8:
+            return
+
+        pos = 0.5 * (p0 + p1)
+        mat = make_arrow_mat(diff)
+
+        g = scene.geoms[scene.ngeom]
+        mujoco.mjv_initGeom(
+            g,
+            mujoco.mjtGeom.mjGEOM_CAPSULE,
+            np.array([radius, 0.5 * length, 0.0], dtype=np.float64),
+            pos,
+            mat.reshape(-1),
+            np.array(rgba, dtype=np.float32),
+        )
+        scene.ngeom += 1
+
+    def add_sphere_to_scene(scene, pos, radius, rgba):
+        if scene.ngeom >= scene.maxgeom:
+            return
+
+        g = scene.geoms[scene.ngeom]
+        mujoco.mjv_initGeom(
+            g,
+            mujoco.mjtGeom.mjGEOM_SPHERE,
+            np.array([radius, 0.0, 0.0], dtype=np.float64),
+            np.asarray(pos, dtype=np.float64),
+            np.eye(3, dtype=np.float64).reshape(-1),
+            np.array(rgba, dtype=np.float32),
+        )
+        scene.ngeom += 1
+
+    def visualize_ee_pose(scene, ee_kp_lb: np.ndarray, axis_len: float, axis_radius: float,
+                          sphere_size: float, alpha: float,
+                          pos_rgba, x_rgba, z_rgba):
+        """
+        Visualize one EE pose represented by keypoints:
+          - kp0: position
+          - kp1-kp0: x-axis direction
+          - kp2-kp0: z-axis direction
+        """
+        kp0_w, kp1_w, kp2_w = ee_kp_lb_to_world(ee_kp_lb)
+
+        x_dir = kp1_w - kp0_w
+        z_dir = kp2_w - kp0_w
+
+        x_norm = np.linalg.norm(x_dir)
+        z_norm = np.linalg.norm(z_dir)
+        if x_norm < 1e-8 or z_norm < 1e-8:
+            return
+
+        x_dir = x_dir / x_norm
+        z_dir = z_dir / z_norm
+
+        x_end = kp0_w + axis_len * x_dir
+        z_end = kp0_w + axis_len * z_dir
+
+        add_sphere_to_scene(scene, kp0_w, sphere_size, [pos_rgba[0], pos_rgba[1], pos_rgba[2], alpha])
+        add_capsule_to_scene(scene, kp0_w, x_end, axis_radius, [x_rgba[0], x_rgba[1], x_rgba[2], alpha])
+        add_capsule_to_scene(scene, kp0_w, z_end, axis_radius, [z_rgba[0], z_rgba[1], z_rgba[2], alpha])
+
+    def update_custom_visualization(viewer, ee_cmd_lb: np.ndarray):
+        """
+        Draw target EE pose, and optionally current EE pose, in viewer.user_scn.
+        """
+        viewer.user_scn.ngeom = 0
+
+        if not vis_ee_target:
+            return
+
+        # Target pose: red
+        visualize_ee_pose(
+            viewer.user_scn,
+            ee_kp_lb=ee_cmd_lb,
+            axis_len=vis_ee_target_axis_len,
+            axis_radius=vis_ee_target_axis_radius,
+            sphere_size=vis_ee_target_sphere_size,
+            alpha=vis_ee_target_alpha,
+            pos_rgba=[1.0, 0.0, 0.0, vis_ee_target_alpha],
+            x_rgba=[1.0, 0.0, 0.0, vis_ee_target_alpha],
+            z_rgba=[1.0, 0.0, 0.0, vis_ee_target_alpha],
+        )
+
+        # Current EE pose: blue
+        if vis_ee_target_show_current:
+            ee_cur_lb = compute_ee_current_kp_lb()
+            visualize_ee_pose(
+                viewer.user_scn,
+                ee_kp_lb=ee_cur_lb,
+                axis_len=vis_ee_target_axis_len * 0.85,
+                axis_radius=vis_ee_target_axis_radius * 0.8,
+                sphere_size=vis_ee_target_sphere_size * 0.85,
+                alpha=min(1.0, vis_ee_target_alpha),
+                pos_rgba=[0.0, 0.0, 1.0, vis_ee_target_alpha],
+                x_rgba=[0.0, 0.0, 1.0, vis_ee_target_alpha],
+                z_rgba=[0.0, 0.0, 1.0, vis_ee_target_alpha],
+            )
+
     # --------------------------------------------------------
     # 7) EE command sampler
     # --------------------------------------------------------
@@ -486,101 +613,108 @@ if __name__ == "__main__":
         rot_threshold=ee_rot_threshold,
         seed=ee_command_seed,
     )
-    ee_cmd_sampler.reset()
-    print(ee_cmd_sampler)
-    print(f"Initial ee command lb: {ee_cmd_sampler.command}")
+
+    ee_cur_init_lb = compute_ee_current_kp_lb()
+    ee_cmd_sampler.reset(initial_kps_lb=ee_cur_init_lb, sample_first=True)
+    ee_cmd_lb_current = ee_cmd_sampler.command.copy()
 
     # --------------------------------------------------------
-    # 8) Build one-step obs
+    # 8) Build one-step observation
     # --------------------------------------------------------
-    last_action = np.zeros(act_dim, dtype=np.float32)
+    last_action = np.zeros(action_dim, dtype=np.float32)
 
     def build_obs_step(ee_cmd_lb: np.ndarray) -> np.ndarray:
-        qpos_mujoco = d.qpos[7:7 + len(mujoco_joint_names)].copy()
-        qvel_mujoco = d.qvel[6:6 + len(mujoco_joint_names)].copy()
+        qpos_mujoco = d.qpos[7:7 + len(mujoco_joint_names)].copy().astype(np.float32)
+        qvel_mujoco = d.qvel[6:6 + len(mujoco_joint_names)].copy().astype(np.float32)
 
         base_ang_vel_b = get_sensor_slice(m, d, "imu_gyro").astype(np.float32)
 
         base_quat_w = quat_unique_wxyz(d.qpos[3:7].copy().astype(np.float32))
         gravity_w = np.array([0.0, 0.0, -1.0], dtype=np.float32)
-        projected_gravity_b = quat_rotate_inverse_numpy(base_quat_w, gravity_w)
+        projected_gravity_b = quat_rotate_inverse_numpy(base_quat_w, gravity_w).astype(np.float32)
 
         ee_cur_lb = compute_ee_current_kp_lb()
-        # ee_cur_lb = ee_cmd_lb.copy()  # for debugging
 
-        joint_pos_policy = qpos_mujoco[mujoco_to_policy_joint_pos_indices]
-        joint_pos_rel = joint_pos_policy - default_joint_pos_policy_jointpos
+        joint_pos_policy = qpos_mujoco[policy_joint_pos_mujoco_indices]
+        joint_pos_rel = joint_pos_policy - default_joint_pos_policy_pos
+        joint_pos_leg_rel = joint_pos_rel[:12]
+        joint_pos_arm_rel = joint_pos_rel[12:18]
 
-        joint_vel_policy = qvel_mujoco[mujoco_to_policy_joint_vel_indices]
+        joint_vel_policy = qvel_mujoco[policy_joint_vel_mujoco_indices]
+        joint_vel_leg = joint_vel_policy[:12]
+        joint_vel_arm = joint_vel_policy[12:18]
+        joint_vel_wheel = joint_vel_policy[18:22]
 
         obs = np.concatenate(
             [
                 base_ang_vel_b,
                 projected_gravity_b,
-                base_cmd,
+                base_command,
                 ee_cmd_lb,
                 ee_cur_lb,
-                joint_pos_rel,
-                joint_vel_policy,
+                joint_pos_leg_rel,
+                joint_pos_arm_rel,
+                joint_vel_leg,
+                joint_vel_arm,
+                joint_vel_wheel,
                 last_action,
             ],
             dtype=np.float32,
         )
 
-        assert obs.shape[0] == obs_dim_per_step, (
-            f"Obs dim mismatch: {obs.shape[0]} vs {obs_dim_per_step}"
-        )
+        assert obs.shape[0] == obs_dim_per_step, f"Obs dim mismatch: {obs.shape[0]} vs {obs_dim_per_step}"
         return obs
 
     # --------------------------------------------------------
-    # 9) Initial targets / history
+    # 9) Initial targets and per-term history
     # --------------------------------------------------------
-    leg_target = default_leg_pos_policy.copy()
-    arm_target = default_arm_pos_policy.copy()
-    wheel_cmd = np.zeros(num_wheel_joints, dtype=np.float32)
-
-    ee_cmd_lb_current = ee_cmd_sampler.command.copy()
+    leg_target = default_leg_pos.copy()
+    arm_target = default_arm_pos.copy()
+    wheel_cmd = np.zeros(4, dtype=np.float32)
+    gripper_target = default_gripper_pos
 
     obs0 = build_obs_step(ee_cmd_lb_current)
-    debug_print_obs("obs0_init", obs0)
 
     i = 0
-    obs0_base_ang_vel = obs0[i:i+3].copy(); i += 3
-    obs0_projected_gravity = obs0[i:i+3].copy(); i += 3
-    obs0_base_cmd = obs0[i:i+3].copy(); i += 3
-    obs0_ee_cmd = obs0[i:i+9].copy(); i += 9
-    obs0_ee_cur = obs0[i:i+9].copy(); i += 9
-    obs0_joint_pos = obs0[i:i+18].copy(); i += 18
-    obs0_joint_vel = obs0[i:i+22].copy(); i += 22
-    obs0_last_action = obs0[i:i+22].copy(); i += 22
+    obs0_base_ang_vel = obs0[i:i + 3]; i += 3
+    obs0_projected_gravity = obs0[i:i + 3]; i += 3
+    obs0_base_cmd = obs0[i:i + 3]; i += 3
+    obs0_ee_cmd = obs0[i:i + 9]; i += 9
+    obs0_ee_cur = obs0[i:i + 9]; i += 9
+    obs0_joint_pos_leg = obs0[i:i + 12]; i += 12
+    obs0_joint_pos_arm = obs0[i:i + 6]; i += 6
+    obs0_joint_vel_leg = obs0[i:i + 12]; i += 12
+    obs0_joint_vel_arm = obs0[i:i + 6]; i += 6
+    obs0_joint_vel_wheel = obs0[i:i + 4]; i += 4
+    obs0_last_action = obs0[i:i + 22]; i += 22
 
-    ang_vel_hist = deque(maxlen=history_len)
-    gravity_hist = deque(maxlen=history_len)
-    cmd_hist = deque(maxlen=history_len)
-    ee_cmd_hist = deque(maxlen=history_len)
-    ee_cur_hist = deque(maxlen=history_len)
-    jpos_hist = deque(maxlen=history_len)
-    jvel_hist = deque(maxlen=history_len)
-    act_hist = deque(maxlen=history_len)
+    base_ang_vel_hist = deque(maxlen=history_length)
+    projected_gravity_hist = deque(maxlen=history_length)
+    base_cmd_hist = deque(maxlen=history_length)
+    ee_cmd_hist = deque(maxlen=history_length)
+    ee_cur_hist = deque(maxlen=history_length)
+    joint_pos_leg_hist = deque(maxlen=history_length)
+    joint_pos_arm_hist = deque(maxlen=history_length)
+    joint_vel_leg_hist = deque(maxlen=history_length)
+    joint_vel_arm_hist = deque(maxlen=history_length)
+    joint_vel_wheel_hist = deque(maxlen=history_length)
+    last_action_hist = deque(maxlen=history_length)
 
-    for _ in range(history_len):
-        ang_vel_hist.append(obs0_base_ang_vel.copy())
-        gravity_hist.append(obs0_projected_gravity.copy())
-        cmd_hist.append(obs0_base_cmd.copy())
+    for _ in range(history_length):
+        base_ang_vel_hist.append(obs0_base_ang_vel.copy())
+        projected_gravity_hist.append(obs0_projected_gravity.copy())
+        base_cmd_hist.append(obs0_base_cmd.copy())
         ee_cmd_hist.append(obs0_ee_cmd.copy())
         ee_cur_hist.append(obs0_ee_cur.copy())
-        jpos_hist.append(obs0_joint_pos.copy())
-        jvel_hist.append(obs0_joint_vel.copy())
-        act_hist.append(obs0_last_action.copy())
+        joint_pos_leg_hist.append(obs0_joint_pos_leg.copy())
+        joint_pos_arm_hist.append(obs0_joint_pos_arm.copy())
+        joint_vel_leg_hist.append(obs0_joint_vel_leg.copy())
+        joint_vel_arm_hist.append(obs0_joint_vel_arm.copy())
+        joint_vel_wheel_hist.append(obs0_joint_vel_wheel.copy())
+        last_action_hist.append(obs0_last_action.copy())
 
     # --------------------------------------------------------
-    # 10) Startup blend-in
-    # --------------------------------------------------------
-    startup_hold_s = 1.0
-    startup_blend_s = 3.0
-
-    # --------------------------------------------------------
-    # 11) Simulation loop
+    # 10) Main simulation loop
     # --------------------------------------------------------
     counter = 0
     policy_tick = 0
@@ -593,17 +727,8 @@ if __name__ == "__main__":
         viewer.cam.distance = 3.0
         viewer.cam.lookat[:] = d.qpos[:3]
 
-        while viewer.is_running() and sim_time < sim_duration:
+        while viewer.is_running() and sim_time < simulation_duration:
             step_start = time.time()
-
-            qpos_mujoco = d.qpos[7:7 + len(mujoco_joint_names)].copy()
-            qvel_mujoco = d.qvel[6:6 + len(mujoco_joint_names)].copy()
-
-            leg_pos = qpos_mujoco[leg_mujoco_joint_indices]
-            leg_vel = qvel_mujoco[leg_mujoco_joint_indices]
-
-            arm_pos = qpos_mujoco[arm_mujoco_joint_indices]
-            arm_vel = qvel_mujoco[arm_mujoco_joint_indices]
 
             if sim_time < startup_hold_s:
                 blend = 0.0
@@ -613,22 +738,38 @@ if __name__ == "__main__":
                 blend = 1.0
             blend = float(np.clip(blend, 0.0, 1.0))
 
-            leg_tau = leg_kps * (leg_target - leg_pos) - leg_kds * leg_vel
-            arm_tau = arm_kps * (arm_target - arm_pos) - arm_kds * arm_vel
+            # ------------------------------------------------
+            # Low-level control (external PD)
+            # ------------------------------------------------
+            qpos_mujoco = d.qpos[7:7 + len(mujoco_joint_names)].copy().astype(np.float32)
+            qvel_mujoco = d.qvel[6:6 + len(mujoco_joint_names)].copy().astype(np.float32)
 
-            leg_tau = np.clip(
-                leg_tau,
-                -np.repeat(leg_torque_limits, 4),
-                np.repeat(leg_torque_limits, 4),
-            )
-            arm_tau = np.clip(arm_tau, -arm_torque_limit, arm_torque_limit)
-            wheel_ctrl = np.clip(wheel_cmd, -wheel_vel_limit, wheel_vel_limit)
+            leg_pos = qpos_mujoco[leg_mujoco_indices]
+            leg_vel = qvel_mujoco[leg_mujoco_indices]
+
+            arm_pos = qpos_mujoco[arm_mujoco_indices]
+            arm_vel = qvel_mujoco[arm_mujoco_indices]
+
+            gripper_pos = float(qpos_mujoco[gripper_mujoco_index])
+            gripper_vel = float(qvel_mujoco[gripper_mujoco_index])
+
+            leg_tau = kps[leg_mujoco_indices] * (leg_target - leg_pos) - kds[leg_mujoco_indices] * leg_vel
+            leg_tau = np.clip(leg_tau, -leg_torque_limits, leg_torque_limits).astype(np.float32)
+
+            arm_tau = kps[arm_mujoco_indices] * (arm_target - arm_pos) - kds[arm_mujoco_indices] * arm_vel
+            arm_tau = np.clip(arm_tau, -arm_torque_limits, arm_torque_limits).astype(np.float32)
+
+            gripper_tau = kps[gripper_mujoco_index] * (gripper_target - gripper_pos) - kds[gripper_mujoco_index] * gripper_vel
+            gripper_tau = float(np.clip(gripper_tau, -gripper_torque_limit, gripper_torque_limit))
+
+            wheel_ctrl = np.clip(wheel_cmd, -wheel_velocity_limits, wheel_velocity_limits).astype(np.float32)
 
             ctrl_source = np.concatenate(
                 [
                     leg_tau,
                     arm_tau,
                     wheel_ctrl,
+                    np.array([gripper_tau], dtype=np.float32),
                 ],
                 dtype=np.float32,
             )
@@ -637,70 +778,67 @@ if __name__ == "__main__":
             for ctrl_i, src_i in enumerate(ctrl_src_indices_or_none):
                 if src_i is not None:
                     d.ctrl[ctrl_i] = ctrl_source[src_i]
-                else:
-                    d.ctrl[ctrl_i] = 0.0
 
             mujoco.mj_step(m, d)
             viewer.cam.lookat[:] = d.qpos[:3]
-            sim_time += dt
+            sim_time += simulation_dt
 
-            if counter % decim == 0:
-                if counter <= 20:
-                    qvel_ang = d.qvel[3:6].copy()
-                    gyro_ang = get_sensor_slice(m, d, "imu_gyro")
-                    print(f"\n[DEBUG gyro_vs_qvel counter={counter}]")
-                    print(f"  qvel[3:6] = {qvel_ang}")
-                    print(f"  imu_gyro  = {gyro_ang}")
-                    print(f"  diff      = {qvel_ang - gyro_ang}")
-
+            # ------------------------------------------------
+            # Policy inference
+            # ------------------------------------------------
+            if counter % control_decimation == 0:
                 if policy_tick > 0 and (policy_tick % ee_resample_interval == 0):
                     ee_cmd_sampler.resample()
                 ee_cmd_lb_current = ee_cmd_sampler.command.copy()
 
                 obs_step = build_obs_step(ee_cmd_lb_current)
 
-                if counter <= 20:
-                    debug_print_obs(f"obs_step_counter_{counter}", obs_step)
-
                 i = 0
-                ang = obs_step[i:i+3]; i += 3
-                grav = obs_step[i:i+3]; i += 3
-                cmd = obs_step[i:i+3]; i += 3
-                ee_cmd = obs_step[i:i+9]; i += 9
-                ee_cur = obs_step[i:i+9]; i += 9
-                jpos = obs_step[i:i+18]; i += 18
-                jvel = obs_step[i:i+22]; i += 22
-                act = obs_step[i:i+22]; i += 22
+                curr_base_ang_vel = obs_step[i:i + 3]; i += 3
+                curr_projected_gravity = obs_step[i:i + 3]; i += 3
+                curr_base_cmd = obs_step[i:i + 3]; i += 3
+                curr_ee_cmd = obs_step[i:i + 9]; i += 9
+                curr_ee_cur = obs_step[i:i + 9]; i += 9
+                curr_joint_pos_leg = obs_step[i:i + 12]; i += 12
+                curr_joint_pos_arm = obs_step[i:i + 6]; i += 6
+                curr_joint_vel_leg = obs_step[i:i + 12]; i += 12
+                curr_joint_vel_arm = obs_step[i:i + 6]; i += 6
+                curr_joint_vel_wheel = obs_step[i:i + 4]; i += 4
+                curr_last_action = obs_step[i:i + 22]; i += 22
 
-                ang_vel_hist.append(ang.copy())
-                gravity_hist.append(grav.copy())
-                cmd_hist.append(cmd.copy())
-                ee_cmd_hist.append(ee_cmd.copy())
-                ee_cur_hist.append(ee_cur.copy())
-                jpos_hist.append(jpos.copy())
-                jvel_hist.append(jvel.copy())
-                act_hist.append(act.copy())
+                base_ang_vel_hist.append(curr_base_ang_vel.copy())
+                projected_gravity_hist.append(curr_projected_gravity.copy())
+                base_cmd_hist.append(curr_base_cmd.copy())
+                ee_cmd_hist.append(curr_ee_cmd.copy())
+                ee_cur_hist.append(curr_ee_cur.copy())
+                joint_pos_leg_hist.append(curr_joint_pos_leg.copy())
+                joint_pos_arm_hist.append(curr_joint_pos_arm.copy())
+                joint_vel_leg_hist.append(curr_joint_vel_leg.copy())
+                joint_vel_arm_hist.append(curr_joint_vel_arm.copy())
+                joint_vel_wheel_hist.append(curr_joint_vel_wheel.copy())
+                last_action_hist.append(curr_last_action.copy())
 
                 obs_stack = np.concatenate(
                     [
-                        np.array(ang_vel_hist).reshape(-1),
-                        np.array(gravity_hist).reshape(-1),
-                        np.array(cmd_hist).reshape(-1),
+                        np.array(base_ang_vel_hist).reshape(-1),
+                        np.array(projected_gravity_hist).reshape(-1),
+                        np.array(base_cmd_hist).reshape(-1),
                         np.array(ee_cmd_hist).reshape(-1),
                         np.array(ee_cur_hist).reshape(-1),
-                        np.array(jpos_hist).reshape(-1),
-                        np.array(jvel_hist).reshape(-1),
-                        np.array(act_hist).reshape(-1),
+                        np.array(joint_pos_leg_hist).reshape(-1),
+                        np.array(joint_pos_arm_hist).reshape(-1),
+                        np.array(joint_vel_leg_hist).reshape(-1),
+                        np.array(joint_vel_arm_hist).reshape(-1),
+                        np.array(joint_vel_wheel_hist).reshape(-1),
+                        np.array(last_action_hist).reshape(-1),
                     ],
                     dtype=np.float32,
                 )
 
-                assert obs_stack.shape[0] == obs_dim, (
-                    f"obs_stack dim mismatch: {obs_stack.shape[0]} vs {obs_dim}"
-                )
+                assert obs_stack.shape[0] == obs_dim, f"obs_stack dim mismatch: {obs_stack.shape[0]} vs {obs_dim}"
 
                 if args.mode == "pd-stand":
-                    action = np.zeros(act_dim, dtype=np.float32)
+                    action = np.zeros(action_dim, dtype=np.float32)
                 else:
                     action = sess.run(
                         [output_name],
@@ -709,50 +847,59 @@ if __name__ == "__main__":
 
                 last_action[:] = action
 
-                leg_act = action[leg_action_policy_indices]
-                arm_act = action[arm_action_policy_indices]
-                wheel_act = action[wheel_action_policy_indices]
+                leg_act = action[leg_action_indices]
+                arm_act = action[arm_action_indices]
+                wheel_act = action[wheel_action_indices]
 
                 if args.mode == "pd-stand":
-                    leg_target = default_leg_pos_policy.copy()
-                    arm_target = default_arm_pos_policy.copy()
-                    wheel_cmd = np.zeros(num_wheel_joints, dtype=np.float32)
+                    leg_target = default_leg_pos.copy()
+                    arm_target = default_arm_pos.copy()
+                    wheel_cmd[:] = 0.0
 
                 elif args.mode == "lock-arm-policy":
-                    leg_target = default_leg_pos_policy + blend * (leg_scale * leg_act)
-                    wheel_cmd = blend * (wheel_scale * wheel_act)
-                    arm_target = default_arm_pos_policy.copy()
+                    leg_target = default_leg_pos + blend * (leg_action_scale * leg_act)
+                    arm_target = default_arm_pos.copy()
+                    wheel_cmd = blend * (wheel_action_scale * wheel_act)
 
                 elif args.mode == "full-policy":
-                    leg_target = default_leg_pos_policy + blend * (leg_scale * leg_act)
-                    wheel_cmd = blend * (wheel_scale * wheel_act)
-                    arm_target = default_arm_pos_policy + blend * (arm_scale * arm_act)
+                    leg_target = default_leg_pos + blend * (leg_action_scale * leg_act)
+                    arm_target = default_arm_pos + blend * (arm_action_scale * arm_act)
+                    wheel_cmd = blend * (wheel_action_scale * wheel_act)
 
                 policy_tick += 1
 
+            # ------------------------------------------------
+            # Visualization
+            # ------------------------------------------------
+            update_custom_visualization(viewer, ee_cmd_lb_current)
+
+            # ------------------------------------------------
+            # Logging
+            # ------------------------------------------------
             if counter % 200 == 0:
-                arm_vals = last_action[arm_action_policy_indices]
+                current_leg_pos = d.qpos[7:7 + len(mujoco_joint_names)].copy()[leg_mujoco_indices]
+                current_arm_pos = d.qpos[7:7 + len(mujoco_joint_names)].copy()[arm_mujoco_indices]
+                leg_err = leg_target - current_leg_pos
+                arm_err = arm_target - current_arm_pos
+
                 print(
                     f"[{counter:6d}] "
-                    f"t={sim_time:6.2f}s "
+                    f"t={sim_time:6.2f}s | "
                     f"z={d.qpos[2]:.3f} | "
-                    f"leg=[{last_action[leg_action_policy_indices].min():+.2f},"
-                    f"{last_action[leg_action_policy_indices].max():+.2f}] "
-                    f"wheel=[{last_action[wheel_action_policy_indices].min():+.2f},"
-                    f"{last_action[wheel_action_policy_indices].max():+.2f}] "
-                    f"arm=[{arm_vals.min():+.2f},{arm_vals.max():+.2f}] "
-                    f"blend={blend:.2f}"
+                    f"blend={blend:.2f} | "
+                    f"leg_act=[{last_action[leg_action_indices].min():+.2f},{last_action[leg_action_indices].max():+.2f}] | "
+                    f"arm_act=[{last_action[arm_action_indices].min():+.2f},{last_action[arm_action_indices].max():+.2f}] | "
+                    f"wheel_act=[{last_action[wheel_action_indices].min():+.2f},{last_action[wheel_action_indices].max():+.2f}]"
                 )
-                print(f"  leg_tau    = {np.array2string(leg_tau, precision=3)}")
-                print(f"  wheel_ctrl = {np.array2string(wheel_ctrl, precision=3)}")
-                print(f"  arm_tau    = {np.array2string(arm_tau, precision=3)}")
-                print(f"  arm_target = {np.array2string(arm_target, precision=3)}")
-                print(f"  ee_cmd_lb  = {np.array2string(ee_cmd_lb_current, precision=3)}")
-                print(f"  d.ctrl     = {np.array2string(d.ctrl, precision=3)}")
+                print(
+                    f"           max_leg_err={np.max(np.abs(leg_err)):.4f} | "
+                    f"max_arm_err={np.max(np.abs(arm_err)):.4f} | "
+                    f"max_ctrl={np.max(np.abs(d.ctrl[:])):.2f}"
+                )
 
             counter += 1
             viewer.sync()
 
-            time_until_next = dt - (time.time() - step_start)
-            if time_until_next > 0:
-                time.sleep(time_until_next)
+            time_until_next_step = simulation_dt - (time.time() - step_start)
+            if time_until_next_step > 0:
+                time.sleep(time_until_next_step)

@@ -484,13 +484,13 @@
     <jointactuatorfrc name="FL_wheel_torque" joint="FL_wheel_joint"/>
     <jointactuatorfrc name="RR_wheel_torque" joint="RR_wheel_joint"/>
     <jointactuatorfrc name="RL_wheel_torque" joint="RL_wheel_joint"/>
-    <jointactuatorfrc name="joint1_torque" joint="joint1"/>
-    <jointactuatorfrc name="joint2_torque" joint="joint2"/>
-    <jointactuatorfrc name="joint3_torque" joint="joint3"/>
-    <jointactuatorfrc name="joint4_torque" joint="joint4"/>
-    <jointactuatorfrc name="joint5_torque" joint="joint5"/>
-    <jointactuatorfrc name="joint6_torque" joint="joint6"/>
-    <jointactuatorfrc name="jointGripper_torque" joint="jointGripper"/>
+    <jointactuatorfrc name="joint1_torque" joint="joint1" noise="0.01"/>
+    <jointactuatorfrc name="joint2_torque" joint="joint2" noise="0.01"/>
+    <jointactuatorfrc name="joint3_torque" joint="joint3" noise="0.01"/>
+    <jointactuatorfrc name="joint4_torque" joint="joint4" noise="0.01"/>
+    <jointactuatorfrc name="joint5_torque" joint="joint5" noise="0.01"/>
+    <jointactuatorfrc name="joint6_torque" joint="joint6" noise="0.01"/>
+    <jointactuatorfrc name="jointGripper_torque" joint="jointGripper" noise="0.01"/>
 
     <framequat name="imu_quat" objtype="site" objname="imu"/>
     <gyro name="imu_gyro" site="imu"/>

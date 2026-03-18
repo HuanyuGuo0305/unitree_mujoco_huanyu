@@ -1,3 +1,4 @@
+# file path
 policy_path: "exported_policy/b2wz1_loco_manipulation/policy.onnx"
 xml_path: "unitree_robots/b2wz1/ground.xml"
 
@@ -58,9 +59,6 @@ kds: [
 # Action scales
 # policy action order:
 #   leg(12) + arm(6) + wheel(4)
-#
-# arm order:
-#   joint1, joint2, joint3, joint4, joint5, joint6
 leg_action_scale: 0.25
 arm_action_scale: [0.25, 0.40, 0.25, 0.25, 0.25, 0.20]
 wheel_action_scale: 4.0

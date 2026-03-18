@@ -3,17 +3,11 @@ Sim2sim deployment for B2WZ1 loco-manipulation ONNX policy in MuJoCo.
 
 Run from simulate_python/:
 
-    python3 deploy_mujoco/b2wz1_loco_manipulation.py \
-        configs/b2wz1_loco_manipulation.yaml \
-        --mode pd-stand
+    python3 deploy_mujoco/b2wz1_loco_manipulation.py configs/b2wz1_loco_manipulation.yaml --mode pd-stand
 
-    python3 deploy_mujoco/b2wz1_loco_manipulation.py \
-        configs/b2wz1_loco_manipulation.yaml \
-        --mode lock-arm-policy
+    python3 deploy_mujoco/b2wz1_loco_manipulation.py configs/b2wz1_loco_manipulation.yaml --mode lock-arm-policy
 
-    python3 deploy_mujoco/b2wz1_loco_manipulation.py \
-        configs/b2wz1_loco_manipulation.yaml \
-        --mode full-policy
+    python3 deploy_mujoco/b2wz1_loco_manipulation.py configs/b2wz1_loco_manipulation.yaml --mode full-policy
 """
 
 import os
@@ -47,59 +41,13 @@ from utilities.math import (
     quat_angle_wxyz,
     quat_from_keypoints_lb,
 )
+from utilities.mujoco_helper import (
+    get_sensor_slice,
+    make_arrow_mat,
+)
 
 
-# ============================================================
-# Helpers
-# ============================================================
-
-def get_sensor_slice(model: mujoco.MjModel, data: mujoco.MjData, sensor_name: str) -> np.ndarray:
-    sid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SENSOR, sensor_name)
-    if sid < 0:
-        raise ValueError(f"Sensor not found: {sensor_name}")
-    adr = model.sensor_adr[sid]
-    dim = model.sensor_dim[sid]
-    return data.sensordata[adr: adr + dim].copy()
-
-
-def make_arrow_mat(direction: np.ndarray, up_hint: np.ndarray = None) -> np.ndarray:
-    """
-    Build a rotation matrix whose local +Z axis aligns with `direction`.
-    This is suitable for mjGEOM_ARROW / mjGEOM_CAPSULE if we place the geom
-    at the midpoint and stretch it along local z.
-    """
-    direction = np.asarray(direction, dtype=np.float64)
-    norm = np.linalg.norm(direction)
-    if norm < 1e-8:
-        return np.eye(3, dtype=np.float64)
-
-    z_axis = direction / norm
-
-    if up_hint is None:
-        up_hint = np.array([0.0, 0.0, 1.0], dtype=np.float64)
-
-    # Avoid degeneracy when z_axis is close to up_hint
-    if abs(np.dot(z_axis, up_hint)) > 0.95:
-        up_hint = np.array([0.0, 1.0, 0.0], dtype=np.float64)
-
-    x_axis = np.cross(up_hint, z_axis)
-    x_norm = np.linalg.norm(x_axis)
-    if x_norm < 1e-8:
-        x_axis = np.array([1.0, 0.0, 0.0], dtype=np.float64)
-    else:
-        x_axis /= x_norm
-
-    y_axis = np.cross(z_axis, x_axis)
-    y_axis /= max(np.linalg.norm(y_axis), 1e-8)
-
-    mat = np.column_stack([x_axis, y_axis, z_axis])
-    return mat.astype(np.float64)
-
-
-# ============================================================
 # IsaacLab-style EE keypoint command sampler (single-env numpy)
-# ============================================================
-
 class PresampledKeypointsInterpolateCommandLBSim:
     """Single-environment NumPy version of PresampledKeypointsInterpolateCommandLB."""
 
@@ -199,25 +147,14 @@ class PresampledKeypointsInterpolateCommandLBSim:
         )
 
 
-# ============================================================
 # Main
-# ============================================================
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("yaml_path", type=str, help="Path to yaml config")
-    parser.add_argument(
-        "--mode",
-        type=str,
-        default="full-policy",
-        choices=["pd-stand", "lock-arm-policy", "full-policy"],
-        help="Run mode",
-    )
+    parser.add_argument("--mode", type=str, default="full-policy", choices=["pd-stand", "lock-arm-policy", "full-policy"], help="Run mode")
     args = parser.parse_args()
 
-    # --------------------------------------------------------
     # 1) Load config
-    # --------------------------------------------------------
     yaml_path = os.path.abspath(args.yaml_path)
     with open(yaml_path, "r") as f:
         cfg = yaml.safe_load(f)
@@ -308,9 +245,7 @@ if __name__ == "__main__":
 
     use_policy = args.mode in ["lock-arm-policy", "full-policy"]
 
-    # --------------------------------------------------------
     # 2) Load ONNX
-    # --------------------------------------------------------
     sess = None
     input_name = None
     output_name = None
@@ -325,9 +260,7 @@ if __name__ == "__main__":
         print("Policy disabled in pd-stand mode.")
     print("=" * 72)
 
-    # --------------------------------------------------------
     # 3) Load MuJoCo model
-    # --------------------------------------------------------
     m = mujoco.MjModel.from_xml_path(xml_path)
     d = mujoco.MjData(m)
     m.opt.timestep = simulation_dt
@@ -336,9 +269,7 @@ if __name__ == "__main__":
     if ee_bid < 0:
         raise ValueError(f"Body not found: {ee_body_name}")
 
-    # --------------------------------------------------------
     # 4) Joint mapping
-    # --------------------------------------------------------
     mujoco_joint_names = [
         "FL_hip_joint", "FL_thigh_joint", "FL_calf_joint", "FL_wheel_joint",
         "FR_hip_joint", "FR_thigh_joint", "FR_calf_joint", "FR_wheel_joint",
@@ -366,18 +297,8 @@ if __name__ == "__main__":
         "joint1", "joint2", "joint3", "joint4", "joint5", "joint6",
     ]
     wheel_joint_names = [
-        "FL_foot_joint", "FR_foot_joint", "RL_foot_joint", "RR_foot_joint",
+        "FL_wheel_joint", "FR_wheel_joint", "RL_wheel_joint", "RR_wheel_joint",
     ]
-
-    rl_to_mujoco_name = {
-        "FL_foot_joint": "FL_wheel_joint",
-        "FR_foot_joint": "FR_wheel_joint",
-        "RL_foot_joint": "RL_wheel_joint",
-        "RR_foot_joint": "RR_wheel_joint",
-    }
-
-    def rl_name_to_mujoco_name(name: str) -> str:
-        return rl_to_mujoco_name.get(name, name)
 
     policy_joint_pos_names = leg_joint_names + arm_joint_names
     policy_joint_vel_names = leg_joint_names + arm_joint_names + wheel_joint_names
@@ -387,15 +308,12 @@ if __name__ == "__main__":
     assert len(policy_joint_vel_names) == 22
     assert len(policy_action_names) == 22
 
-    policy_joint_pos_mujoco_names = [rl_name_to_mujoco_name(n) for n in policy_joint_pos_names]
-    policy_joint_vel_mujoco_names = [rl_name_to_mujoco_name(n) for n in policy_joint_vel_names]
+    policy_joint_pos_mujoco_indices = [mujoco_joint_names.index(n) for n in policy_joint_pos_names]
+    policy_joint_vel_mujoco_indices = [mujoco_joint_names.index(n) for n in policy_joint_vel_names]
 
-    policy_joint_pos_mujoco_indices = [mujoco_joint_names.index(n) for n in policy_joint_pos_mujoco_names]
-    policy_joint_vel_mujoco_indices = [mujoco_joint_names.index(n) for n in policy_joint_vel_mujoco_names]
-
-    leg_mujoco_indices = [mujoco_joint_names.index(rl_name_to_mujoco_name(n)) for n in leg_joint_names]
+    leg_mujoco_indices = [mujoco_joint_names.index(n) for n in leg_joint_names]
     arm_mujoco_indices = [mujoco_joint_names.index(n) for n in arm_joint_names]
-    wheel_mujoco_indices = [mujoco_joint_names.index(rl_name_to_mujoco_name(n)) for n in wheel_joint_names]
+    wheel_mujoco_indices = [mujoco_joint_names.index(n) for n in wheel_joint_names]
     gripper_mujoco_index = mujoco_joint_names.index("jointGripper")
 
     leg_action_indices = list(range(0, 12))
@@ -403,9 +321,9 @@ if __name__ == "__main__":
     wheel_action_indices = list(range(18, 22))
 
     control_source_joint_names = (
-        [mujoco_joint_names[i] for i in leg_mujoco_indices]
-        + [mujoco_joint_names[i] for i in arm_mujoco_indices]
-        + [mujoco_joint_names[i] for i in wheel_mujoco_indices]
+        leg_joint_names
+        + arm_joint_names
+        + wheel_joint_names
         + ["jointGripper"]
     )
 
@@ -428,9 +346,7 @@ if __name__ == "__main__":
     print(f"  Policy action order    : {policy_action_names}")
     print("=" * 72)
 
-    # --------------------------------------------------------
     # 5) Initialize state
-    # --------------------------------------------------------
     d.qpos[:] = 0.0
     d.qvel[:] = 0.0
     d.ctrl[:] = 0.0
@@ -442,9 +358,7 @@ if __name__ == "__main__":
     mujoco.mj_forward(m, d)
     print(f"Initialized height z = {d.qpos[2]:.3f} m")
 
-    # --------------------------------------------------------
     # 6) Compute current EE keypoints in level-base frame
-    # --------------------------------------------------------
     def compute_ee_current_kp_lb() -> np.ndarray:
         base_pos_w = d.qpos[0:3].copy().astype(np.float32)
         base_quat_w = quat_unique_wxyz(d.qpos[3:7].copy().astype(np.float32))
@@ -602,9 +516,7 @@ if __name__ == "__main__":
                 z_rgba=[0.0, 0.0, 1.0, vis_ee_target_alpha],
             )
 
-    # --------------------------------------------------------
     # 7) EE command sampler
-    # --------------------------------------------------------
     ee_cmd_sampler = PresampledKeypointsInterpolateCommandLBSim(
         file_path=ee_command_path,
         kp_dx=ee_kp_dx,
@@ -618,9 +530,8 @@ if __name__ == "__main__":
     ee_cmd_sampler.reset(initial_kps_lb=ee_cur_init_lb, sample_first=True)
     ee_cmd_lb_current = ee_cmd_sampler.command.copy()
 
-    # --------------------------------------------------------
+
     # 8) Build one-step observation
-    # --------------------------------------------------------
     last_action = np.zeros(action_dim, dtype=np.float32)
 
     def build_obs_step(ee_cmd_lb: np.ndarray) -> np.ndarray:
@@ -665,9 +576,7 @@ if __name__ == "__main__":
         assert obs.shape[0] == obs_dim_per_step, f"Obs dim mismatch: {obs.shape[0]} vs {obs_dim_per_step}"
         return obs
 
-    # --------------------------------------------------------
     # 9) Initial targets and per-term history
-    # --------------------------------------------------------
     leg_target = default_leg_pos.copy()
     arm_target = default_arm_pos.copy()
     wheel_cmd = np.zeros(4, dtype=np.float32)
@@ -713,9 +622,7 @@ if __name__ == "__main__":
         joint_vel_wheel_hist.append(obs0_joint_vel_wheel.copy())
         last_action_hist.append(obs0_last_action.copy())
 
-    # --------------------------------------------------------
     # 10) Main simulation loop
-    # --------------------------------------------------------
     counter = 0
     policy_tick = 0
     sim_time = 0.0
@@ -738,9 +645,7 @@ if __name__ == "__main__":
                 blend = 1.0
             blend = float(np.clip(blend, 0.0, 1.0))
 
-            # ------------------------------------------------
             # Low-level control (external PD)
-            # ------------------------------------------------
             qpos_mujoco = d.qpos[7:7 + len(mujoco_joint_names)].copy().astype(np.float32)
             qvel_mujoco = d.qvel[6:6 + len(mujoco_joint_names)].copy().astype(np.float32)
 
@@ -783,9 +688,7 @@ if __name__ == "__main__":
             viewer.cam.lookat[:] = d.qpos[:3]
             sim_time += simulation_dt
 
-            # ------------------------------------------------
             # Policy inference
-            # ------------------------------------------------
             if counter % control_decimation == 0:
                 if policy_tick > 0 and (policy_tick % ee_resample_interval == 0):
                     ee_cmd_sampler.resample()
@@ -868,14 +771,10 @@ if __name__ == "__main__":
 
                 policy_tick += 1
 
-            # ------------------------------------------------
             # Visualization
-            # ------------------------------------------------
             update_custom_visualization(viewer, ee_cmd_lb_current)
 
-            # ------------------------------------------------
             # Logging
-            # ------------------------------------------------
             if counter % 200 == 0:
                 current_leg_pos = d.qpos[7:7 + len(mujoco_joint_names)].copy()[leg_mujoco_indices]
                 current_arm_pos = d.qpos[7:7 + len(mujoco_joint_names)].copy()[arm_mujoco_indices]

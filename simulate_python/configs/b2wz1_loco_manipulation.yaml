@@ -1,5 +1,5 @@
 # file path
-policy_path: "exported_policy/b2wz1_loco_manipulation/policy.onnx"
+policy_path: "exported_policy/b2wz1_loco_manipulation/policy_1.onnx"
 xml_path: "unitree_robots/b2wz1/ground.xml"
 
 # Simulation

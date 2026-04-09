@@ -46,6 +46,10 @@ from utilities.mujoco_helper import (
     make_arrow_mat,
 )
 
+"""
+Command to run: python deploy_mujoco/b2wz1_loco_manipulation.py configs/b2wz1_loco_manipulation.yaml 
+"""
+
 
 # IsaacLab-style EE keypoint command sampler (single-env numpy)
 class PresampledKeypointsInterpolateCommandLBSim:

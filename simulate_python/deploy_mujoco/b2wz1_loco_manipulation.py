@@ -46,22 +46,28 @@ from utilities.mujoco_helper import (
     make_arrow_mat,
 )
 
-"""
-Command to run: python deploy_mujoco/b2wz1_loco_manipulation.py configs/b2wz1_loco_manipulation.yaml 
-"""
 
+class PresampledKeypointsCubicTrajectoryCommandLBSim:
+    """Single-environment NumPy version of PresampledKeypointsCubicTrajectoryCommandLB.
 
-# IsaacLab-style EE keypoint command sampler (single-env numpy)
-class PresampledKeypointsInterpolateCommandLBSim:
-    """Single-environment NumPy version of PresampledKeypointsInterpolateCommandLB."""
+    Behavior:
+      - sample raw target from presampled table
+      - apply adjacent target limit on kp0 / rotation
+      - generate cubic trajectory from current command to accepted target
+      - hold at target for hold_duration_s
+      - auto-resample when one cycle finishes
+    """
 
     def __init__(
         self,
         file_path: str,
+        control_dt: float,
         kp_dx: float = 0.30,
         kp_dz: float = 0.30,
         kp0_threshold: float = 0.20,
         rot_threshold: float = 0.40,
+        traj_duration_s: float = 4.0,
+        hold_duration_s: float = 4.0,
         seed: int = 0,
     ):
         arr = np.load(file_path).astype(np.float32)
@@ -76,9 +82,25 @@ class PresampledKeypointsInterpolateCommandLBSim:
         self._kp0_threshold = float(kp0_threshold)
         self._rot_threshold = float(rot_threshold)
 
+        self._traj_duration_s = float(traj_duration_s)
+        self._hold_duration_s = float(hold_duration_s)
+        self._cycle_duration_s = self._traj_duration_s + self._hold_duration_s
+
+        self._control_dt = float(control_dt)
+        self._cycle_steps = max(1, int(round(self._cycle_duration_s / self._control_dt)))
+
         self._rng = np.random.default_rng(seed)
-        self.keypoints_command_lb = np.zeros(9, dtype=np.float32)
+
         self._has_cmd = False
+        self._step_in_cycle = 0
+
+        self.keypoints_command_lb = np.zeros(9, dtype=np.float32)
+
+        self._traj_start_pos_lb = np.zeros(3, dtype=np.float32)
+        self._traj_start_quat_lb = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+
+        self._traj_end_pos_lb = np.zeros(3, dtype=np.float32)
+        self._traj_end_quat_lb = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
 
     @property
     def command(self) -> np.ndarray:
@@ -105,57 +127,108 @@ class PresampledKeypointsInterpolateCommandLBSim:
         kp2 = kp0 + quat_apply_wxyz(quat, off_z)
         return kp1.astype(np.float32), kp2.astype(np.float32)
 
-    def _compute_next_from_reference(self, ref_kps_lb: np.ndarray, sampled_kps_lb: np.ndarray) -> np.ndarray:
-        kp0_s, kp1_s, kp2_s = self._split_kps(sampled_kps_lb)
-        kp0_r, kp1_r, kp2_r = self._split_kps(ref_kps_lb)
+    @staticmethod
+    def _cubic_time_scaling(tau: float) -> float:
+        tau = float(np.clip(tau, 0.0, 1.0))
+        return 3.0 * tau * tau - 2.0 * tau * tau * tau
 
-        quat_r = quat_from_keypoints_lb(kp0_r, kp1_r, kp2_r, self._dx, self._dz)
-        quat_s = quat_from_keypoints_lb(kp0_s, kp1_s, kp2_s, self._dx, self._dz)
-
-        delta = kp0_s - kp0_r
+    def _apply_adjacent_target_limit(
+        self,
+        kp0_ref: np.ndarray,
+        quat_ref: np.ndarray,
+        kp0_raw: np.ndarray,
+        quat_raw: np.ndarray,
+    ):
+        delta = kp0_raw - kp0_ref
         dist = max(float(np.linalg.norm(delta)), 1e-8)
         alpha_pos = min(self._kp0_threshold / dist, 1.0)
 
-        ang = max(float(quat_angle_wxyz(quat_r, quat_s)), 1e-8)
+        ang = max(float(quat_angle_wxyz(quat_ref, quat_raw)), 1e-8)
         alpha_rot = min(self._rot_threshold / ang, 1.0)
 
         alpha = min(alpha_pos, alpha_rot)
         within = (dist <= self._kp0_threshold) and (ang <= self._rot_threshold)
         alpha_eff = 1.0 if within else alpha
 
-        kp0_new = kp0_r + alpha_eff * delta
-        quat_new = quat_slerp_wxyz(quat_r, quat_s, float(alpha_eff))
-        kp1_new, kp2_new = self._kps_from_pose(kp0_new, quat_new)
+        kp0_new = kp0_ref + alpha_eff * delta
+        quat_new = quat_slerp_wxyz(quat_ref, quat_raw, float(alpha_eff))
+        return kp0_new.astype(np.float32), quat_new.astype(np.float32)
 
-        return self._pack_kps(kp0_new, kp1_new, kp2_new)
+    def _start_new_cycle_from_reference(self, ref_kps_lb: np.ndarray):
+        kp0_ref, kp1_ref, kp2_ref = self._split_kps(ref_kps_lb)
+        quat_ref = quat_from_keypoints_lb(kp0_ref, kp1_ref, kp2_ref, self._dx, self._dz)
+
+        sampled = self._table[self._pick_index()].copy()
+        kp0_raw, kp1_raw, kp2_raw = self._split_kps(sampled)
+        quat_raw = quat_from_keypoints_lb(kp0_raw, kp1_raw, kp2_raw, self._dx, self._dz)
+
+        kp0_end, quat_end = self._apply_adjacent_target_limit(
+            kp0_ref=kp0_ref,
+            quat_ref=quat_ref,
+            kp0_raw=kp0_raw,
+            quat_raw=quat_raw,
+        )
+
+        self._traj_start_pos_lb = kp0_ref.astype(np.float32)
+        self._traj_start_quat_lb = quat_ref.astype(np.float32)
+        self._traj_end_pos_lb = kp0_end.astype(np.float32)
+        self._traj_end_quat_lb = quat_end.astype(np.float32)
+
+        kp1_start, kp2_start = self._kps_from_pose(self._traj_start_pos_lb, self._traj_start_quat_lb)
+        self.keypoints_command_lb = self._pack_kps(self._traj_start_pos_lb, kp1_start, kp2_start)
+
+        self._step_in_cycle = 0
+        self._has_cmd = True
 
     def reset(self, initial_kps_lb: np.ndarray, sample_first: bool = True):
         initial_kps_lb = np.asarray(initial_kps_lb, dtype=np.float32).reshape(9,)
+        self._has_cmd = False
+        self._step_in_cycle = 0
         self.keypoints_command_lb = initial_kps_lb.copy()
-        self._has_cmd = True
 
         if sample_first:
-            sampled = self._table[self._pick_index()].copy()
-            self.keypoints_command_lb = self._compute_next_from_reference(
-                ref_kps_lb=initial_kps_lb,
-                sampled_kps_lb=sampled,
-            )
+            self._start_new_cycle_from_reference(initial_kps_lb)
+        else:
+            self._has_cmd = True
 
-    def resample(self):
+    def _eval_current_command(self):
+        if self._step_in_cycle <= 0:
+            tau = 0.0
+        else:
+            t = min(self._step_in_cycle * self._control_dt, self._cycle_duration_s)
+            tau = min(t / max(self._traj_duration_s, 1e-6), 1.0)
+
+        s = self._cubic_time_scaling(tau)
+
+        pos = self._traj_start_pos_lb + s * (self._traj_end_pos_lb - self._traj_start_pos_lb)
+        quat = quat_slerp_wxyz(self._traj_start_quat_lb, self._traj_end_quat_lb, s)
+
+        kp1, kp2 = self._kps_from_pose(pos, quat)
+        self.keypoints_command_lb = self._pack_kps(pos, kp1, kp2)
+
+    def update(self) -> np.ndarray:
         if not self._has_cmd:
             raise RuntimeError("Command sampler not initialized. Call reset() first.")
-        sampled = self._table[self._pick_index()].copy()
-        self.keypoints_command_lb = self._compute_next_from_reference(
-            ref_kps_lb=self.keypoints_command_lb,
-            sampled_kps_lb=sampled,
-        )
+
+        self._eval_current_command()
+
+        self._step_in_cycle += 1
+        if self._step_in_cycle >= self._cycle_steps:
+            self._start_new_cycle_from_reference(self.keypoints_command_lb.copy())
+
+        return self.command
 
 
-# Main
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("yaml_path", type=str, help="Path to yaml config")
-    parser.add_argument("--mode", type=str, default="full-policy", choices=["pd-stand", "lock-arm-policy", "full-policy"], help="Run mode")
+    parser.add_argument(
+        "--mode",
+        type=str,
+        default="full-policy",
+        choices=["pd-stand", "lock-arm-policy", "full-policy"],
+        help="Run mode",
+    )
     args = parser.parse_args()
 
     # 1) Load config
@@ -174,6 +247,7 @@ if __name__ == "__main__":
     simulation_duration = float(cfg["simulation_duration"])
     simulation_dt = float(cfg["simulation_dt"])
     control_decimation = int(cfg["control_decimation"])
+    control_dt = simulation_dt * control_decimation
 
     history_length = int(cfg["history_length"])
     obs_dim_per_step = int(cfg["obs_dim_per_step"])
@@ -208,7 +282,8 @@ if __name__ == "__main__":
     ee_kp0_threshold = float(cfg.get("ee_kp0_threshold", 0.20))
     ee_rot_threshold = float(cfg.get("ee_rot_threshold", 0.40))
     ee_command_seed = int(cfg.get("ee_command_seed", 0))
-    ee_resample_interval = int(cfg.get("ee_resample_interval", 400))
+    ee_traj_duration_s = float(cfg.get("ee_traj_duration_s", 4.0))
+    ee_hold_duration_s = float(cfg.get("ee_hold_duration_s", 4.0))
 
     startup_hold_s = float(cfg.get("startup_hold_s", 1.0))
     startup_blend_s = float(cfg.get("startup_blend_s", 2.0))
@@ -221,7 +296,7 @@ if __name__ == "__main__":
     vis_ee_target_alpha = float(cfg.get("vis_ee_target_alpha", 0.9))
     vis_ee_target_show_current = bool(cfg.get("vis_ee_target_show_current", True))
 
-    assert obs_dim_per_step == 89, f"Expected obs_dim_per_step=89, got {obs_dim_per_step}"
+    assert obs_dim_per_step == 98, f"Expected obs_dim_per_step=98, got {obs_dim_per_step}"
     assert obs_dim == obs_dim_per_step * history_length, f"Expected obs_dim={obs_dim_per_step * history_length}, got {obs_dim}"
     assert action_dim == 22, f"Expected action_dim=22, got {action_dim}"
     assert len(default_joint_pos) == 23
@@ -238,12 +313,13 @@ if __name__ == "__main__":
     print(f"Mode:            {args.mode}")
     print(f"Policy:          {policy_path}")
     print(f"XML:             {xml_path}")
-    print(f"Control freq:    {1.0 / (simulation_dt * control_decimation):.1f} Hz")
+    print(f"Control freq:    {1.0 / control_dt:.1f} Hz")
     print(f"Obs per step:    {obs_dim_per_step}")
     print(f"Obs stacked dim: {obs_dim}")
     print(f"Action dim:      {action_dim}")
     print(f"Arm scales:      {arm_action_scale}")
-    print(f"EE resample int: {ee_resample_interval}")
+    print(f"EE cycle:        {ee_traj_duration_s + ee_hold_duration_s:.2f}s")
+    print(f"EE cycle steps:  {int(round((ee_traj_duration_s + ee_hold_duration_s) / control_dt))}")
     print(f"Vis EE target:   {vis_ee_target}")
     print("=" * 72)
 
@@ -412,9 +488,6 @@ if __name__ == "__main__":
         return kp0_w, kp1_w, kp2_w
 
     def add_capsule_to_scene(scene, p0, p1, radius, rgba):
-        """
-        Add a capsule between p0 and p1 to the user scene.
-        """
         if scene.ngeom >= scene.maxgeom:
             return
 
@@ -457,12 +530,6 @@ if __name__ == "__main__":
     def visualize_ee_pose(scene, ee_kp_lb: np.ndarray, axis_len: float, axis_radius: float,
                           sphere_size: float, alpha: float,
                           pos_rgba, x_rgba, z_rgba):
-        """
-        Visualize one EE pose represented by keypoints:
-          - kp0: position
-          - kp1-kp0: x-axis direction
-          - kp2-kp0: z-axis direction
-        """
         kp0_w, kp1_w, kp2_w = ee_kp_lb_to_world(ee_kp_lb)
 
         x_dir = kp1_w - kp0_w
@@ -484,9 +551,6 @@ if __name__ == "__main__":
         add_capsule_to_scene(scene, kp0_w, z_end, axis_radius, [z_rgba[0], z_rgba[1], z_rgba[2], alpha])
 
     def update_custom_visualization(viewer, ee_cmd_lb: np.ndarray):
-        """
-        Draw target EE pose, and optionally current EE pose, in viewer.user_scn.
-        """
         viewer.user_scn.ngeom = 0
 
         if not vis_ee_target:
@@ -505,7 +569,6 @@ if __name__ == "__main__":
             z_rgba=[1.0, 0.0, 0.0, vis_ee_target_alpha],
         )
 
-        # Current EE pose: blue
         if vis_ee_target_show_current:
             ee_cur_lb = compute_ee_current_kp_lb()
             visualize_ee_pose(
@@ -521,19 +584,21 @@ if __name__ == "__main__":
             )
 
     # 7) EE command sampler
-    ee_cmd_sampler = PresampledKeypointsInterpolateCommandLBSim(
+    ee_cmd_sampler = PresampledKeypointsCubicTrajectoryCommandLBSim(
         file_path=ee_command_path,
+        control_dt=control_dt,
         kp_dx=ee_kp_dx,
         kp_dz=ee_kp_dz,
         kp0_threshold=ee_kp0_threshold,
         rot_threshold=ee_rot_threshold,
+        traj_duration_s=ee_traj_duration_s,
+        hold_duration_s=ee_hold_duration_s,
         seed=ee_command_seed,
     )
 
     ee_cur_init_lb = compute_ee_current_kp_lb()
     ee_cmd_sampler.reset(initial_kps_lb=ee_cur_init_lb, sample_first=True)
     ee_cmd_lb_current = ee_cmd_sampler.command.copy()
-
 
     # 8) Build one-step observation
     last_action = np.zeros(action_dim, dtype=np.float32)
@@ -549,6 +614,7 @@ if __name__ == "__main__":
         projected_gravity_b = quat_rotate_inverse_numpy(base_quat_w, gravity_w).astype(np.float32)
 
         ee_cur_lb = compute_ee_current_kp_lb()
+        ee_err_lb = (ee_cmd_lb - ee_cur_lb).astype(np.float32)
 
         joint_pos_policy = qpos_mujoco[policy_joint_pos_mujoco_indices]
         joint_pos_rel = joint_pos_policy - default_joint_pos_policy_pos
@@ -562,17 +628,18 @@ if __name__ == "__main__":
 
         obs = np.concatenate(
             [
-                base_ang_vel_b,
-                projected_gravity_b,
-                base_command,
-                ee_cmd_lb,
-                ee_cur_lb,
-                joint_pos_leg_rel,
-                joint_pos_arm_rel,
-                joint_vel_leg,
-                joint_vel_arm,
-                joint_vel_wheel,
-                last_action,
+                base_ang_vel_b,          # 3
+                projected_gravity_b,     # 3
+                base_command,            # 3
+                ee_cmd_lb,               # 9
+                ee_cur_lb,               # 9
+                ee_err_lb,               # 9
+                joint_pos_leg_rel,       # 12
+                joint_pos_arm_rel,       # 6
+                joint_vel_leg,           # 12
+                joint_vel_arm,           # 6
+                joint_vel_wheel,         # 4
+                last_action,             # 22
             ],
             dtype=np.float32,
         )
@@ -594,6 +661,7 @@ if __name__ == "__main__":
     obs0_base_cmd = obs0[i:i + 3]; i += 3
     obs0_ee_cmd = obs0[i:i + 9]; i += 9
     obs0_ee_cur = obs0[i:i + 9]; i += 9
+    obs0_ee_err = obs0[i:i + 9]; i += 9
     obs0_joint_pos_leg = obs0[i:i + 12]; i += 12
     obs0_joint_pos_arm = obs0[i:i + 6]; i += 6
     obs0_joint_vel_leg = obs0[i:i + 12]; i += 12
@@ -606,6 +674,7 @@ if __name__ == "__main__":
     base_cmd_hist = deque(maxlen=history_length)
     ee_cmd_hist = deque(maxlen=history_length)
     ee_cur_hist = deque(maxlen=history_length)
+    ee_err_hist = deque(maxlen=history_length)
     joint_pos_leg_hist = deque(maxlen=history_length)
     joint_pos_arm_hist = deque(maxlen=history_length)
     joint_vel_leg_hist = deque(maxlen=history_length)
@@ -619,6 +688,7 @@ if __name__ == "__main__":
         base_cmd_hist.append(obs0_base_cmd.copy())
         ee_cmd_hist.append(obs0_ee_cmd.copy())
         ee_cur_hist.append(obs0_ee_cur.copy())
+        ee_err_hist.append(obs0_ee_err.copy())
         joint_pos_leg_hist.append(obs0_joint_pos_leg.copy())
         joint_pos_arm_hist.append(obs0_joint_pos_arm.copy())
         joint_vel_leg_hist.append(obs0_joint_vel_leg.copy())
@@ -694,9 +764,7 @@ if __name__ == "__main__":
 
             # Policy inference
             if counter % control_decimation == 0:
-                if policy_tick > 0 and (policy_tick % ee_resample_interval == 0):
-                    ee_cmd_sampler.resample()
-                ee_cmd_lb_current = ee_cmd_sampler.command.copy()
+                ee_cmd_lb_current = ee_cmd_sampler.update()
 
                 obs_step = build_obs_step(ee_cmd_lb_current)
 
@@ -706,6 +774,7 @@ if __name__ == "__main__":
                 curr_base_cmd = obs_step[i:i + 3]; i += 3
                 curr_ee_cmd = obs_step[i:i + 9]; i += 9
                 curr_ee_cur = obs_step[i:i + 9]; i += 9
+                curr_ee_err = obs_step[i:i + 9]; i += 9
                 curr_joint_pos_leg = obs_step[i:i + 12]; i += 12
                 curr_joint_pos_arm = obs_step[i:i + 6]; i += 6
                 curr_joint_vel_leg = obs_step[i:i + 12]; i += 12
@@ -718,6 +787,7 @@ if __name__ == "__main__":
                 base_cmd_hist.append(curr_base_cmd.copy())
                 ee_cmd_hist.append(curr_ee_cmd.copy())
                 ee_cur_hist.append(curr_ee_cur.copy())
+                ee_err_hist.append(curr_ee_err.copy())
                 joint_pos_leg_hist.append(curr_joint_pos_leg.copy())
                 joint_pos_arm_hist.append(curr_joint_pos_arm.copy())
                 joint_vel_leg_hist.append(curr_joint_vel_leg.copy())
@@ -732,6 +802,7 @@ if __name__ == "__main__":
                         np.array(base_cmd_hist).reshape(-1),
                         np.array(ee_cmd_hist).reshape(-1),
                         np.array(ee_cur_hist).reshape(-1),
+                        np.array(ee_err_hist).reshape(-1),
                         np.array(joint_pos_leg_hist).reshape(-1),
                         np.array(joint_pos_arm_hist).reshape(-1),
                         np.array(joint_vel_leg_hist).reshape(-1),
@@ -754,9 +825,9 @@ if __name__ == "__main__":
 
                 last_action[:] = action
 
-                leg_act = action[leg_action_indices]
-                arm_act = action[arm_action_indices]
-                wheel_act = action[wheel_action_indices]
+                leg_act = action[leg_action_indices].copy()
+                arm_act = action[arm_action_indices].copy()
+                wheel_act = action[wheel_action_indices].copy()
 
                 if args.mode == "pd-stand":
                     leg_target = default_leg_pos.copy()
@@ -784,6 +855,7 @@ if __name__ == "__main__":
                 current_arm_pos = d.qpos[7:7 + len(mujoco_joint_names)].copy()[arm_mujoco_indices]
                 leg_err = leg_target - current_leg_pos
                 arm_err = arm_target - current_arm_pos
+                ee_err_norm = np.linalg.norm((ee_cmd_lb_current - compute_ee_current_kp_lb()).reshape(3, 3), axis=1)
 
                 print(
                     f"[{counter:6d}] "
@@ -797,6 +869,7 @@ if __name__ == "__main__":
                 print(
                     f"           max_leg_err={np.max(np.abs(leg_err)):.4f} | "
                     f"max_arm_err={np.max(np.abs(arm_err)):.4f} | "
+                    f"ee_err=[{ee_err_norm[0]:.4f},{ee_err_norm[1]:.4f},{ee_err_norm[2]:.4f}] | "
                     f"max_ctrl={np.max(np.abs(d.ctrl[:])):.2f}"
                 )
 

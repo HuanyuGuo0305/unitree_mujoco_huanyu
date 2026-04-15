@@ -1,5 +1,5 @@
 # file path
-policy_path: "exported_policy/b2wz1_loco_manipulation/policy_.onnx"
+policy_path: "exported_policy/b2wz1_loco_manipulation/policy_new.onnx"
 xml_path: "unitree_robots/b2wz1/ground.xml"
 
 # Simulation
@@ -12,13 +12,15 @@ startup_hold_s: 1.0
 startup_blend_s: 2.0
 
 # Dimensions
-history_length: 3
-obs_dim_per_step: 89
-obs_dim: 267
+# current training architecture:
+# 3 + 3 + 3 + 9 + 9 + 9 + 12 + 6 + 12 + 6 + 4 + 22 = 98
+history_length: 5
+obs_dim_per_step: 98
+obs_dim: 490
 action_dim: 22
 
 # Commands / root init
-base_command: [0.5, 0.0, 0.0]   # [vx, vy, wz]
+base_command: [0.0, 0.0, 0.0]   # [vx, vy, wz]
 
 root_pos: [0.0, 0.0, 0.6017]
 root_quat_wxyz: [1.0, 0.0, 0.0, 0.0]
@@ -45,23 +47,23 @@ kps: [
   160.0, 160.0, 160.0,   0.0,
   160.0, 160.0, 160.0,   0.0,
   160.0, 160.0, 160.0,   0.0,
-   40.0,  40.0,  40.0,  40.0,  40.0,  40.0,  40.0
+   30.0,  50.0,  50.0,  30.0,  30.0,  30.0,  30.0
 ]
 
 kds: [
-   5.0,   5.0,   5.0,  10.0,
-   5.0,   5.0,   5.0,  10.0,
-   5.0,   5.0,   5.0,  10.0,
-   5.0,   5.0,   5.0,  10.0,
-   3.0,   3.0,   3.0,   3.0,   3.0,   3.0,   3.0
+   5.0, 5.0, 5.0, 10.0,
+   5.0, 5.0, 5.0, 10.0,
+   5.0, 5.0, 5.0, 10.0,
+   5.0, 5.0, 5.0, 10.0,
+   3.0, 4.0, 4.0, 3.0, 3.0, 3.0, 3.0
 ]
 
 # Action scales
 # policy action order:
 #   leg(12) + arm(6) + wheel(4)
 leg_action_scale: 0.25
-arm_action_scale: [0.25, 0.35, 0.25, 0.25, 0.25, 0.25]
-wheel_action_scale: 5.0
+arm_action_scale: [0.15, 0.15, 0.15, 0.15, 0.15, 0.15]
+wheel_action_scale: 4.0
 
 # Control limits
 leg_torque_limits: [
@@ -82,11 +84,13 @@ ee_body: "gripperStator"
 ee_command_path: "utilities/tools/reachable_kp0kp1kp2_lb.npy"
 ee_kp_dx: 0.30
 ee_kp_dz: 0.30
-ee_kp0_threshold: 0.20
-ee_rot_threshold: 0.40
+ee_kp0_threshold: 0.30
+ee_rot_threshold: 0.60
 ee_command_seed: 0
 
-ee_resample_interval: 200
+# must match training command generator
+ee_traj_duration_s: 4
+ee_hold_duration_s: 2
 
 # visualization
 vis_ee_target: true

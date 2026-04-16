@@ -47,6 +47,112 @@ from utilities.mujoco_helper import (
 )
 
 
+class SequentialKeypointsTrajectoryCommandLBSim:
+    """
+    Sequential version:
+    - follow npy row-by-row
+    - cubic interpolation between consecutive points
+    - loop forever
+    - interface aligned with PresampledKeypointsCubicTrajectoryCommandLBSim:
+        * reset(initial_kps_lb, sample_first=True)
+        * update()
+        * command property
+    """
+
+    def __init__(
+        self,
+        file_path: str,
+        control_dt: float,
+        traj_duration_s: float = 0.3,
+        hold_duration_s: float = 0.0,
+    ):
+        arr = np.load(file_path).astype(np.float32)
+        if arr.ndim != 2 or arr.shape[1] != 9:
+            raise ValueError(f"Expected npy shape (N,9), got {arr.shape} from '{file_path}'.")
+
+        self.table = arr
+        self.N = arr.shape[0]
+
+        self.control_dt = float(control_dt)
+        self.traj_duration_s = float(traj_duration_s)
+        self.hold_duration_s = float(hold_duration_s)
+
+        self.steps_per_traj = max(1, int(round(self.traj_duration_s / self.control_dt)))
+        self.steps_per_hold = max(0, int(round(self.hold_duration_s / self.control_dt)))
+
+        self.idx = 0
+        self.step = 0
+        self.phase = "move"   # "move" or "hold"
+        self._has_cmd = False
+
+        self.current = self.table[0].copy()
+        self.start = self.table[0].copy()
+        self.target = self.table[0].copy()
+
+    @property
+    def command(self) -> np.ndarray:
+        return self.current.copy()
+
+    @staticmethod
+    def cubic(t: float) -> float:
+        t = float(np.clip(t, 0.0, 1.0))
+        return 3.0 * t * t - 2.0 * t * t * t
+
+    def reset(self, initial_kps_lb: np.ndarray, sample_first: bool = True):
+        """
+        Align interface with old sampler.
+        Args:
+            initial_kps_lb: current EE keypoints in LB at reset time
+            sample_first:
+                - True: start from current pose, then move to table[0]
+                - False: stay at current pose until first update logic advances
+        """
+        initial_kps_lb = np.asarray(initial_kps_lb, dtype=np.float32).reshape(9,)
+
+        self.idx = 0
+        self.step = 0
+        self.phase = "move"
+        self._has_cmd = True
+
+        self.current = initial_kps_lb.copy()
+        self.start = initial_kps_lb.copy()
+
+        if sample_first:
+            self.target = self.table[0].copy()
+        else:
+            self.target = initial_kps_lb.copy()
+
+    def update(self) -> np.ndarray:
+        if not self._has_cmd:
+            raise RuntimeError("Command sampler not initialized. Call reset() first.")
+
+        if self.phase == "move":
+            tau = self.step / max(1, self.steps_per_traj)
+            s = self.cubic(tau)
+
+            self.current = ((1.0 - s) * self.start + s * self.target).astype(np.float32)
+
+            self.step += 1
+            if self.step > self.steps_per_traj:
+                self.current = self.target.copy()
+                self.phase = "hold"
+                self.step = 0
+
+        elif self.phase == "hold":
+            self.current = self.target.copy()
+            self.step += 1
+
+            if self.step >= self.steps_per_hold:
+                self.phase = "move"
+                self.step = 0
+
+                self.idx = (self.idx + 1) % self.N
+                self.start = self.target.copy()
+                self.target = self.table[self.idx].copy()
+
+        return self.current.copy()
+
+
 class PresampledKeypointsCubicTrajectoryCommandLBSim:
     """Single-environment NumPy version of PresampledKeypointsCubicTrajectoryCommandLB.
 
@@ -584,16 +690,24 @@ if __name__ == "__main__":
             )
 
     # 7) EE command sampler
-    ee_cmd_sampler = PresampledKeypointsCubicTrajectoryCommandLBSim(
+    # ee_cmd_sampler = PresampledKeypointsCubicTrajectoryCommandLBSim(
+    #     file_path=ee_command_path,
+    #     control_dt=control_dt,
+    #     kp_dx=ee_kp_dx,
+    #     kp_dz=ee_kp_dz,
+    #     kp0_threshold=ee_kp0_threshold,
+    #     rot_threshold=ee_rot_threshold,
+    #     traj_duration_s=ee_traj_duration_s,
+    #     hold_duration_s=ee_hold_duration_s,
+    #     seed=ee_command_seed,
+    # )
+
+    # To record a circle trajectory tracking demo
+    ee_cmd_sampler = SequentialKeypointsTrajectoryCommandLBSim(
         file_path=ee_command_path,
         control_dt=control_dt,
-        kp_dx=ee_kp_dx,
-        kp_dz=ee_kp_dz,
-        kp0_threshold=ee_kp0_threshold,
-        rot_threshold=ee_rot_threshold,
-        traj_duration_s=ee_traj_duration_s,
-        hold_duration_s=ee_hold_duration_s,
-        seed=ee_command_seed,
+        traj_duration_s=4.0,   
+        hold_duration_s=2.0,
     )
 
     ee_cur_init_lb = compute_ee_current_kp_lb()

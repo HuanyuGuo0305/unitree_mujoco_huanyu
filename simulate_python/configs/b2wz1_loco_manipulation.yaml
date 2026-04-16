@@ -1,5 +1,5 @@
 # file path
-policy_path: "exported_policy/b2wz1_loco_manipulation/policy_new.onnx"
+policy_path: "exported_policy/b2wz1_loco_manipulation/policy_traj.onnx"
 xml_path: "unitree_robots/b2wz1/ground.xml"
 
 # Simulation
@@ -20,7 +20,7 @@ obs_dim: 490
 action_dim: 22
 
 # Commands / root init
-base_command: [0.0, 0.0, 0.0]   # [vx, vy, wz]
+base_command: [0.5, 0.0, 0.0]   # [vx, vy, wz]
 
 root_pos: [0.0, 0.0, 0.6017]
 root_quat_wxyz: [1.0, 0.0, 0.0, 0.0]
@@ -62,7 +62,7 @@ kds: [
 # policy action order:
 #   leg(12) + arm(6) + wheel(4)
 leg_action_scale: 0.25
-arm_action_scale: [0.15, 0.15, 0.15, 0.15, 0.15, 0.15]
+arm_action_scale: [0.20, 0.20, 0.20, 0.20, 0.20, 0.20]
 wheel_action_scale: 4.0
 
 # Control limits
@@ -84,8 +84,8 @@ ee_body: "gripperStator"
 ee_command_path: "utilities/tools/reachable_kp0kp1kp2_lb.npy"
 ee_kp_dx: 0.30
 ee_kp_dz: 0.30
-ee_kp0_threshold: 0.30
-ee_rot_threshold: 0.60
+ee_kp0_threshold: 0.20
+ee_rot_threshold: 0.40
 ee_command_seed: 0
 
 # must match training command generator

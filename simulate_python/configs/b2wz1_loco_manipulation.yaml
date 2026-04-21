@@ -1,5 +1,5 @@
-# file path
-policy_path: "exported_policy/b2wz1_loco_manipulation/policy_traj_1.onnx"
+# File paths
+policy_path: "exported_policy/b2wz1_loco_manipulation/policy.onnx"
 xml_path: "unitree_robots/b2wz1/ground.xml"
 
 # Simulation
@@ -7,31 +7,25 @@ simulation_duration: 60.0
 simulation_dt: 0.005
 control_decimation: 4
 
-# startup smooth blend
+# Startup smooth blend
 startup_hold_s: 1.0
 startup_blend_s: 2.0
 
 # Dimensions
-# current training architecture:
-# 3 + 3 + 3 + 9 + 9 + 9 + 12 + 6 + 12 + 6 + 4 + 22 = 98
+# Current training observation:
+# 3 + 3 + 3 + 9 + 9 + 12 + 6 + 12 + 6 + 4 + 22 = 89
 history_length: 5
-obs_dim_per_step: 98
-obs_dim: 490
+obs_dim_per_step: 89
+obs_dim: 445
 action_dim: 22
 
 # Commands / root init
-base_command: [0.0, 0.0, 0.0]   # [vx, vy, wz]
+base_command: [0.5, 0.0, 0.0]   # [vx, vy, wz]
 
 root_pos: [0.0, 0.0, 0.6017]
 root_quat_wxyz: [1.0, 0.0, 0.0, 0.0]
 
 # Default joint position in MuJoCo order (23)
-# MuJoCo order:
-# FL_hip, FL_thigh, FL_calf, FL_wheel,
-# FR_hip, FR_thigh, FR_calf, FR_wheel,
-# RL_hip, RL_thigh, RL_calf, RL_wheel,
-# RR_hip, RR_thigh, RR_calf, RR_wheel,
-# joint1, joint2, joint3, joint4, joint5, joint6, jointGripper
 default_joint_pos: [
    0.1, 0.8, -1.5, 0.0,
   -0.1, 0.8, -1.5, 0.0,
@@ -41,7 +35,6 @@ default_joint_pos: [
 ]
 
 # Joint gains in MuJoCo order (23)
-# wheels are velocity-controlled, kp is unused, kd kept for convenience
 kps: [
   160.0, 160.0, 160.0,   0.0,
   160.0, 160.0, 160.0,   0.0,
@@ -59,10 +52,8 @@ kds: [
 ]
 
 # Action scales
-# policy action order:
-#   leg(12) + arm(6) + wheel(4)
 leg_action_scale: 0.25
-arm_action_scale: [0.20, 0.20, 0.20, 0.20, 0.20, 0.20]
+arm_action_scale: [0.25, 0.25, 0.25, 0.25, 0.25, 0.25]
 wheel_action_scale: 4.0
 
 # Control limits
@@ -73,26 +64,31 @@ leg_torque_limits: [
   200.0, 200.0, 320.0
 ]
 
-# joint2 = 60, others = 30
 arm_torque_limits: [30.0, 60.0, 30.0, 30.0, 30.0, 30.0]
 gripper_torque_limit: 30.0
 
 wheel_velocity_limits: [50.0, 50.0, 50.0, 50.0]
 
-# EE command sampler
+# End-effector command sampler
 ee_body: "gripperStator"
-ee_command_path: "utilities/data/demo_sweep_curve.npy"
+ee_command_mode: "presampled"   # "presampled" or "sequential"
+ee_command_path: "utilities/data/reachable_kp0kp1kp2_lb.npy"
+
 ee_kp_dx: 0.30
 ee_kp_dz: 0.30
-ee_kp0_threshold: 0.20
-ee_rot_threshold: 0.40
 ee_command_seed: 0
 
-# must match training command generator
-ee_traj_duration_s: 4
-ee_hold_duration_s: 2
+# Presampled mode settings
+ee_kp0_threshold_range: [0.20, 0.30]
+ee_cycle_duration_s: 6.0
+ee_traj_duration_min_s: 4.0
+ee_traj_duration_max_s: 5.0
 
-# visualization
+# Sequential mode settings
+ee_sequential_traj_duration_s: 2.0
+ee_sequential_hold_duration_s: 1.0
+
+# Visualization
 vis_ee_target: true
 vis_ee_target_axis_len: 0.20
 vis_ee_target_axis_radius: 0.01

@@ -4,9 +4,7 @@ Sim2sim deployment for B2WZ1 loco-manipulation ONNX policy in MuJoCo.
 Run from simulate_python/:
 
     python3 deploy_mujoco/b2wz1_loco_manipulation.py configs/b2wz1_loco_manipulation.yaml --mode pd-stand
-
     python3 deploy_mujoco/b2wz1_loco_manipulation.py configs/b2wz1_loco_manipulation.yaml --mode lock-arm-policy
-
     python3 deploy_mujoco/b2wz1_loco_manipulation.py configs/b2wz1_loco_manipulation.yaml --mode full-policy
 """
 
@@ -22,7 +20,6 @@ import numpy as np
 import onnxruntime as ort
 import yaml
 
-# Add project root to sys.path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
 sys.path.insert(0, project_root)
 
@@ -38,7 +35,6 @@ from utilities.math import (
     euler_xyz_from_quat_wxyz,
     quat_from_yaw_wxyz,
     quat_slerp_wxyz,
-    quat_angle_wxyz,
     quat_from_keypoints_lb,
 )
 from utilities.mujoco_helper import (
@@ -49,14 +45,11 @@ from utilities.mujoco_helper import (
 
 class SequentialKeypointsTrajectoryCommandLBSim:
     """
-    Sequential version:
-    - follow npy row-by-row
-    - cubic interpolation between consecutive points
-    - loop forever
-    - interface aligned with PresampledKeypointsCubicTrajectoryCommandLBSim:
-        * reset(initial_kps_lb, sample_first=True)
-        * update()
-        * command property
+    Sequential trajectory sampler:
+      - follow rows in npy sequentially
+      - cubic interpolation between consecutive rows
+      - optional hold at each waypoint
+      - loop forever
     """
 
     def __init__(
@@ -82,7 +75,7 @@ class SequentialKeypointsTrajectoryCommandLBSim:
 
         self.idx = 0
         self.step = 0
-        self.phase = "move"   # "move" or "hold"
+        self.phase = "move"
         self._has_cmd = False
 
         self.current = self.table[0].copy()
@@ -99,14 +92,6 @@ class SequentialKeypointsTrajectoryCommandLBSim:
         return 3.0 * t * t - 2.0 * t * t * t
 
     def reset(self, initial_kps_lb: np.ndarray, sample_first: bool = True):
-        """
-        Align interface with old sampler.
-        Args:
-            initial_kps_lb: current EE keypoints in LB at reset time
-            sample_first:
-                - True: start from current pose, then move to table[0]
-                - False: stay at current pose until first update logic advances
-        """
         initial_kps_lb = np.asarray(initial_kps_lb, dtype=np.float32).reshape(9,)
 
         self.idx = 0
@@ -116,11 +101,7 @@ class SequentialKeypointsTrajectoryCommandLBSim:
 
         self.current = initial_kps_lb.copy()
         self.start = initial_kps_lb.copy()
-
-        if sample_first:
-            self.target = self.table[0].copy()
-        else:
-            self.target = initial_kps_lb.copy()
+        self.target = self.table[0].copy() if sample_first else initial_kps_lb.copy()
 
     def update(self) -> np.ndarray:
         if not self._has_cmd:
@@ -133,7 +114,7 @@ class SequentialKeypointsTrajectoryCommandLBSim:
             self.current = ((1.0 - s) * self.start + s * self.target).astype(np.float32)
 
             self.step += 1
-            if self.step > self.steps_per_traj:
+            if self.step >= self.steps_per_traj:
                 self.current = self.target.copy()
                 self.phase = "hold"
                 self.step = 0
@@ -145,7 +126,6 @@ class SequentialKeypointsTrajectoryCommandLBSim:
             if self.step >= self.steps_per_hold:
                 self.phase = "move"
                 self.step = 0
-
                 self.idx = (self.idx + 1) % self.N
                 self.start = self.target.copy()
                 self.target = self.table[self.idx].copy()
@@ -154,14 +134,18 @@ class SequentialKeypointsTrajectoryCommandLBSim:
 
 
 class PresampledKeypointsCubicTrajectoryCommandLBSim:
-    """Single-environment NumPy version of PresampledKeypointsCubicTrajectoryCommandLB.
+    """
+    Single-environment NumPy version aligned with the current training command.
 
     Behavior:
-      - sample raw target from presampled table
-      - apply adjacent target limit on kp0 / rotation
-      - generate cubic trajectory from current command to accepted target
-      - hold at target for hold_duration_s
-      - auto-resample when one cycle finishes
+      - sample raw target from presampled LB table
+      - sample kp0 threshold each cycle
+      - apply adjacent target limit
+      - compute accepted distance
+      - map accepted distance to traj duration using threshold range bounds
+      - hold duration = cycle_duration - traj_duration
+      - cubic interpolation from current reference pose to accepted target
+      - hold at the target until cycle ends
     """
 
     def __init__(
@@ -170,10 +154,10 @@ class PresampledKeypointsCubicTrajectoryCommandLBSim:
         control_dt: float,
         kp_dx: float = 0.30,
         kp_dz: float = 0.30,
-        kp0_threshold: float = 0.20,
-        rot_threshold: float = 0.40,
-        traj_duration_s: float = 4.0,
-        hold_duration_s: float = 4.0,
+        kp0_threshold_range=(0.20, 0.50),
+        cycle_duration_s: float = 8.0,
+        traj_duration_min_s: float = 4.0,
+        traj_duration_max_s: float = 6.0,
         seed: int = 0,
     ):
         arr = np.load(file_path).astype(np.float32)
@@ -185,12 +169,25 @@ class PresampledKeypointsCubicTrajectoryCommandLBSim:
 
         self._dx = float(kp_dx)
         self._dz = float(kp_dz)
-        self._kp0_threshold = float(kp0_threshold)
-        self._rot_threshold = float(rot_threshold)
 
-        self._traj_duration_s = float(traj_duration_s)
-        self._hold_duration_s = float(hold_duration_s)
-        self._cycle_duration_s = self._traj_duration_s + self._hold_duration_s
+        kp0_threshold_range = np.asarray(kp0_threshold_range, dtype=np.float32).reshape(2,)
+        self._kp0_threshold_min = float(min(kp0_threshold_range[0], kp0_threshold_range[1]))
+        self._kp0_threshold_max = float(max(kp0_threshold_range[0], kp0_threshold_range[1]))
+
+        self._cycle_duration_s = float(cycle_duration_s)
+        if self._cycle_duration_s <= 0.0:
+            raise ValueError(f"Invalid cycle_duration_s={self._cycle_duration_s}")
+
+        self._traj_duration_min_s = float(traj_duration_min_s)
+        self._traj_duration_max_s = float(traj_duration_max_s)
+        if self._traj_duration_min_s <= 0.0 or self._traj_duration_max_s < self._traj_duration_min_s:
+            raise ValueError(
+                f"Invalid traj duration range: ({self._traj_duration_min_s}, {self._traj_duration_max_s})"
+            )
+        if self._traj_duration_max_s > self._cycle_duration_s:
+            raise ValueError(
+                f"traj_duration_max_s {self._traj_duration_max_s} exceeds cycle_duration_s {self._cycle_duration_s}"
+            )
 
         self._control_dt = float(control_dt)
         self._cycle_steps = max(1, int(round(self._cycle_duration_s / self._control_dt)))
@@ -208,19 +205,35 @@ class PresampledKeypointsCubicTrajectoryCommandLBSim:
         self._traj_end_pos_lb = np.zeros(3, dtype=np.float32)
         self._traj_end_quat_lb = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
 
+        self._current_kp0_threshold = self._kp0_threshold_min
+        self._current_traj_duration_s = self._traj_duration_min_s
+        self._current_hold_duration_s = self._cycle_duration_s - self._current_traj_duration_s
+
     @property
     def command(self) -> np.ndarray:
         return self.keypoints_command_lb.copy()
 
+    @property
+    def current_kp0_threshold(self) -> float:
+        return float(self._current_kp0_threshold)
+
+    @property
+    def current_traj_duration_s(self) -> float:
+        return float(self._current_traj_duration_s)
+
+    @property
+    def current_hold_duration_s(self) -> float:
+        return float(self._current_hold_duration_s)
+
     def _pick_index(self) -> int:
         return int(self._rng.integers(0, self._num_rows))
 
+    def _sample_kp0_threshold(self) -> float:
+        return float(self._rng.uniform(self._kp0_threshold_min, self._kp0_threshold_max))
+
     @staticmethod
     def _split_kps(kps_9: np.ndarray):
-        kp0 = kps_9[0:3]
-        kp1 = kps_9[3:6]
-        kp2 = kps_9[6:9]
-        return kp0, kp1, kp2
+        return kps_9[0:3], kps_9[3:6], kps_9[6:9]
 
     @staticmethod
     def _pack_kps(kp0: np.ndarray, kp1: np.ndarray, kp2: np.ndarray) -> np.ndarray:
@@ -244,23 +257,40 @@ class PresampledKeypointsCubicTrajectoryCommandLBSim:
         quat_ref: np.ndarray,
         kp0_raw: np.ndarray,
         quat_raw: np.ndarray,
+        kp0_threshold: float,
     ):
         delta = kp0_raw - kp0_ref
         dist = max(float(np.linalg.norm(delta)), 1e-8)
-        alpha_pos = min(self._kp0_threshold / dist, 1.0)
 
-        ang = max(float(quat_angle_wxyz(quat_ref, quat_raw)), 1e-8)
-        alpha_rot = min(self._rot_threshold / ang, 1.0)
-
-        alpha = min(alpha_pos, alpha_rot)
-        within = (dist <= self._kp0_threshold) and (ang <= self._rot_threshold)
-        alpha_eff = 1.0 if within else alpha
+        alpha_pos = min(float(kp0_threshold) / dist, 1.0)
+        alpha_eff = 1.0 if dist <= float(kp0_threshold) else alpha_pos
 
         kp0_new = kp0_ref + alpha_eff * delta
-        quat_new = quat_slerp_wxyz(quat_ref, quat_raw, float(alpha_eff))
+        quat_new = quat_slerp_wxyz(quat_ref, quat_raw, alpha_eff)
+
         return kp0_new.astype(np.float32), quat_new.astype(np.float32)
 
+    def _compute_traj_duration_from_distance(self, start_pos: np.ndarray, end_pos: np.ndarray) -> float:
+        dist_eff = float(np.linalg.norm(end_pos - start_pos))
+
+        dist_min = self._kp0_threshold_min
+        dist_max = self._kp0_threshold_max
+
+        if dist_max <= dist_min + 1e-8:
+            alpha = 0.0
+        else:
+            alpha = (dist_eff - dist_min) / (dist_max - dist_min)
+            alpha = float(np.clip(alpha, 0.0, 1.0))
+
+        traj = self._traj_duration_min_s + alpha * (self._traj_duration_max_s - self._traj_duration_min_s)
+        hold = self._cycle_duration_s - traj
+
+        self._current_traj_duration_s = float(traj)
+        self._current_hold_duration_s = float(hold)
+        return self._current_traj_duration_s
+
     def _start_new_cycle_from_reference(self, ref_kps_lb: np.ndarray):
+        ref_kps_lb = np.asarray(ref_kps_lb, dtype=np.float32).reshape(9,)
         kp0_ref, kp1_ref, kp2_ref = self._split_kps(ref_kps_lb)
         quat_ref = quat_from_keypoints_lb(kp0_ref, kp1_ref, kp2_ref, self._dx, self._dz)
 
@@ -268,12 +298,17 @@ class PresampledKeypointsCubicTrajectoryCommandLBSim:
         kp0_raw, kp1_raw, kp2_raw = self._split_kps(sampled)
         quat_raw = quat_from_keypoints_lb(kp0_raw, kp1_raw, kp2_raw, self._dx, self._dz)
 
+        self._current_kp0_threshold = self._sample_kp0_threshold()
+
         kp0_end, quat_end = self._apply_adjacent_target_limit(
             kp0_ref=kp0_ref,
             quat_ref=quat_ref,
             kp0_raw=kp0_raw,
             quat_raw=quat_raw,
+            kp0_threshold=self._current_kp0_threshold,
         )
+
+        self._compute_traj_duration_from_distance(kp0_ref, kp0_end)
 
         self._traj_start_pos_lb = kp0_ref.astype(np.float32)
         self._traj_start_quat_lb = quat_ref.astype(np.float32)
@@ -292,6 +327,18 @@ class PresampledKeypointsCubicTrajectoryCommandLBSim:
         self._step_in_cycle = 0
         self.keypoints_command_lb = initial_kps_lb.copy()
 
+        self._current_kp0_threshold = self._kp0_threshold_min
+        self._current_traj_duration_s = self._traj_duration_min_s
+        self._current_hold_duration_s = self._cycle_duration_s - self._current_traj_duration_s
+
+        kp0_init, kp1_init, kp2_init = self._split_kps(initial_kps_lb)
+        quat_init = quat_from_keypoints_lb(kp0_init, kp1_init, kp2_init, self._dx, self._dz)
+
+        self._traj_start_pos_lb = kp0_init.astype(np.float32)
+        self._traj_start_quat_lb = quat_init.astype(np.float32)
+        self._traj_end_pos_lb = kp0_init.astype(np.float32)
+        self._traj_end_quat_lb = quat_init.astype(np.float32)
+
         if sample_first:
             self._start_new_cycle_from_reference(initial_kps_lb)
         else:
@@ -302,7 +349,7 @@ class PresampledKeypointsCubicTrajectoryCommandLBSim:
             tau = 0.0
         else:
             t = min(self._step_in_cycle * self._control_dt, self._cycle_duration_s)
-            tau = min(t / max(self._traj_duration_s, 1e-6), 1.0)
+            tau = min(t / max(self._current_traj_duration_s, 1e-6), 1.0)
 
         s = self._cubic_time_scaling(tau)
 
@@ -337,7 +384,6 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    # 1) Load config
     yaml_path = os.path.abspath(args.yaml_path)
     with open(yaml_path, "r") as f:
         cfg = yaml.safe_load(f)
@@ -385,16 +431,15 @@ if __name__ == "__main__":
 
     ee_kp_dx = float(cfg.get("ee_kp_dx", 0.30))
     ee_kp_dz = float(cfg.get("ee_kp_dz", 0.30))
-    ee_kp0_threshold = float(cfg.get("ee_kp0_threshold", 0.20))
-    ee_rot_threshold = float(cfg.get("ee_rot_threshold", 0.40))
+    ee_kp0_threshold_range = cfg.get("ee_kp0_threshold_range", [0.20, 0.50])
     ee_command_seed = int(cfg.get("ee_command_seed", 0))
-    ee_traj_duration_s = float(cfg.get("ee_traj_duration_s", 4.0))
-    ee_hold_duration_s = float(cfg.get("ee_hold_duration_s", 4.0))
+    ee_cycle_duration_s = float(cfg.get("ee_cycle_duration_s", 8.0))
+    ee_traj_duration_min_s = float(cfg.get("ee_traj_duration_min_s", 4.0))
+    ee_traj_duration_max_s = float(cfg.get("ee_traj_duration_max_s", 6.0))
 
     startup_hold_s = float(cfg.get("startup_hold_s", 1.0))
     startup_blend_s = float(cfg.get("startup_blend_s", 2.0))
 
-    # Visualization config
     vis_ee_target = bool(cfg.get("vis_ee_target", True))
     vis_ee_target_axis_len = float(cfg.get("vis_ee_target_axis_len", 0.20))
     vis_ee_target_axis_radius = float(cfg.get("vis_ee_target_axis_radius", 0.01))
@@ -402,7 +447,7 @@ if __name__ == "__main__":
     vis_ee_target_alpha = float(cfg.get("vis_ee_target_alpha", 0.9))
     vis_ee_target_show_current = bool(cfg.get("vis_ee_target_show_current", True))
 
-    assert obs_dim_per_step == 98, f"Expected obs_dim_per_step=98, got {obs_dim_per_step}"
+    assert obs_dim_per_step == 89, f"Expected obs_dim_per_step=89, got {obs_dim_per_step}"
     assert obs_dim == obs_dim_per_step * history_length, f"Expected obs_dim={obs_dim_per_step * history_length}, got {obs_dim}"
     assert action_dim == 22, f"Expected action_dim=22, got {action_dim}"
     assert len(default_joint_pos) == 23
@@ -412,6 +457,8 @@ if __name__ == "__main__":
     assert len(arm_torque_limits) == 6
     assert len(wheel_velocity_limits) == 4
     assert arm_action_scale.shape == (6,), f"Expected arm_action_scale shape (6,), got {arm_action_scale.shape}"
+
+    ee_command_mode = str(cfg.get("ee_command_mode", "presampled"))
 
     print("=" * 72)
     print("B2WZ1 Loco-Manipulation - ONNX Policy (MuJoCo sim2sim)")
@@ -424,14 +471,31 @@ if __name__ == "__main__":
     print(f"Obs stacked dim: {obs_dim}")
     print(f"Action dim:      {action_dim}")
     print(f"Arm scales:      {arm_action_scale}")
-    print(f"EE cycle:        {ee_traj_duration_s + ee_hold_duration_s:.2f}s")
-    print(f"EE cycle steps:  {int(round((ee_traj_duration_s + ee_hold_duration_s) / control_dt))}")
+    print(f"EE mode:         {ee_command_mode}")
+    print(f"EE path:         {ee_command_path}")
+    if ee_command_mode == "presampled":
+        print(f"EE kp0 range:    {ee_kp0_threshold_range}")
+        print(f"EE cycle:        {ee_cycle_duration_s:.2f}s")
+        print(
+            f"EE dist->traj:   "
+            f"[{ee_kp0_threshold_range[0]:.2f}, {ee_kp0_threshold_range[1]:.2f}] "
+            f"-> [{ee_traj_duration_min_s:.2f}, {ee_traj_duration_max_s:.2f}] s"
+        )
+        print(
+            f"EE hold range:   "
+            f"[{ee_cycle_duration_s - ee_traj_duration_max_s:.2f}, "
+            f"{ee_cycle_duration_s - ee_traj_duration_min_s:.2f}]"
+        )
+    else:
+        print(
+            f"EE cycle:        "
+            f"{float(cfg.get('ee_sequential_traj_duration_s', 4.0)) + float(cfg.get('ee_sequential_hold_duration_s', 2.0)):.2f}s"
+        )
     print(f"Vis EE target:   {vis_ee_target}")
     print("=" * 72)
 
     use_policy = args.mode in ["lock-arm-policy", "full-policy"]
 
-    # 2) Load ONNX
     sess = None
     input_name = None
     output_name = None
@@ -446,7 +510,6 @@ if __name__ == "__main__":
         print("Policy disabled in pd-stand mode.")
     print("=" * 72)
 
-    # 3) Load MuJoCo model
     m = mujoco.MjModel.from_xml_path(xml_path)
     d = mujoco.MjData(m)
     m.opt.timestep = simulation_dt
@@ -455,7 +518,6 @@ if __name__ == "__main__":
     if ee_bid < 0:
         raise ValueError(f"Body not found: {ee_body_name}")
 
-    # 4) Joint mapping
     mujoco_joint_names = [
         "FL_hip_joint", "FL_thigh_joint", "FL_calf_joint", "FL_wheel_joint",
         "FR_hip_joint", "FR_thigh_joint", "FR_calf_joint", "FR_wheel_joint",
@@ -473,18 +535,13 @@ if __name__ == "__main__":
         "joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "jointGripper",
     ]
 
-    # Policy order
     leg_joint_names = [
         "FL_hip_joint", "FR_hip_joint", "RL_hip_joint", "RR_hip_joint",
         "FL_thigh_joint", "FR_thigh_joint", "RL_thigh_joint", "RR_thigh_joint",
         "FL_calf_joint", "FR_calf_joint", "RL_calf_joint", "RR_calf_joint",
     ]
-    arm_joint_names = [
-        "joint1", "joint2", "joint3", "joint4", "joint5", "joint6",
-    ]
-    wheel_joint_names = [
-        "FL_wheel_joint", "FR_wheel_joint", "RL_wheel_joint", "RR_wheel_joint",
-    ]
+    arm_joint_names = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
+    wheel_joint_names = ["FL_wheel_joint", "FR_wheel_joint", "RL_wheel_joint", "RR_wheel_joint"]
 
     policy_joint_pos_names = leg_joint_names + arm_joint_names
     policy_joint_vel_names = leg_joint_names + arm_joint_names + wheel_joint_names
@@ -506,13 +563,7 @@ if __name__ == "__main__":
     arm_action_indices = list(range(12, 18))
     wheel_action_indices = list(range(18, 22))
 
-    control_source_joint_names = (
-        leg_joint_names
-        + arm_joint_names
-        + wheel_joint_names
-        + ["jointGripper"]
-    )
-
+    control_source_joint_names = leg_joint_names + arm_joint_names + wheel_joint_names + ["jointGripper"]
     ctrl_source_index_by_name = {name: i for i, name in enumerate(control_source_joint_names)}
     ctrl_src_indices_or_none = [
         ctrl_source_index_by_name[name] if name in ctrl_source_index_by_name else None
@@ -532,7 +583,6 @@ if __name__ == "__main__":
     print(f"  Policy action order    : {policy_action_names}")
     print("=" * 72)
 
-    # 5) Initialize state
     d.qpos[:] = 0.0
     d.qvel[:] = 0.0
     d.ctrl[:] = 0.0
@@ -544,7 +594,6 @@ if __name__ == "__main__":
     mujoco.mj_forward(m, d)
     print(f"Initialized height z = {d.qpos[2]:.3f} m")
 
-    # 6) Compute current EE keypoints in level-base frame
     def compute_ee_current_kp_lb() -> np.ndarray:
         base_pos_w = d.qpos[0:3].copy().astype(np.float32)
         base_quat_w = quat_unique_wxyz(d.qpos[3:7].copy().astype(np.float32))
@@ -570,7 +619,6 @@ if __name__ == "__main__":
         return np.concatenate([kp0, kp1, kp2]).astype(np.float32)
 
     def get_level_base_pose_world():
-        """Return level-base origin/orientation in world frame."""
         base_pos_w = d.qpos[0:3].copy().astype(np.float32)
         base_quat_w = quat_unique_wxyz(d.qpos[3:7].copy().astype(np.float32))
 
@@ -580,7 +628,6 @@ if __name__ == "__main__":
         return base_pos_w, lb_quat_w
 
     def ee_kp_lb_to_world(ee_kp_lb: np.ndarray):
-        """Convert EE keypoints from level-base frame to world frame."""
         base_pos_w, lb_quat_w = get_level_base_pose_world()
 
         kp0_lb = ee_kp_lb[0:3].astype(np.float32)
@@ -633,9 +680,17 @@ if __name__ == "__main__":
         )
         scene.ngeom += 1
 
-    def visualize_ee_pose(scene, ee_kp_lb: np.ndarray, axis_len: float, axis_radius: float,
-                          sphere_size: float, alpha: float,
-                          pos_rgba, x_rgba, z_rgba):
+    def visualize_ee_pose(
+        scene,
+        ee_kp_lb: np.ndarray,
+        axis_len: float,
+        axis_radius: float,
+        sphere_size: float,
+        alpha: float,
+        pos_rgba,
+        x_rgba,
+        z_rgba,
+    ):
         kp0_w, kp1_w, kp2_w = ee_kp_lb_to_world(ee_kp_lb)
 
         x_dir = kp1_w - kp0_w
@@ -662,7 +717,6 @@ if __name__ == "__main__":
         if not vis_ee_target:
             return
 
-        # Target pose: red
         visualize_ee_pose(
             viewer.user_scn,
             ee_kp_lb=ee_cmd_lb,
@@ -689,32 +743,33 @@ if __name__ == "__main__":
                 z_rgba=[0.0, 0.0, 1.0, vis_ee_target_alpha],
             )
 
-    # 7) EE command sampler
-    # ee_cmd_sampler = PresampledKeypointsCubicTrajectoryCommandLBSim(
-    #     file_path=ee_command_path,
-    #     control_dt=control_dt,
-    #     kp_dx=ee_kp_dx,
-    #     kp_dz=ee_kp_dz,
-    #     kp0_threshold=ee_kp0_threshold,
-    #     rot_threshold=ee_rot_threshold,
-    #     traj_duration_s=ee_traj_duration_s,
-    #     hold_duration_s=ee_hold_duration_s,
-    #     seed=ee_command_seed,
-    # )
-
-    # To record a circle trajectory tracking demo
-    ee_cmd_sampler = SequentialKeypointsTrajectoryCommandLBSim(
-        file_path=ee_command_path,
-        control_dt=control_dt,
-        traj_duration_s=4.0,   
-        hold_duration_s=2.0,
-    )
+    if ee_command_mode == "sequential":
+        ee_cmd_sampler = SequentialKeypointsTrajectoryCommandLBSim(
+            file_path=ee_command_path,
+            control_dt=control_dt,
+            traj_duration_s=float(cfg.get("ee_sequential_traj_duration_s", 4.0)),
+            hold_duration_s=float(cfg.get("ee_sequential_hold_duration_s", 2.0)),
+        )
+    elif ee_command_mode == "presampled":
+        ee_cmd_sampler = PresampledKeypointsCubicTrajectoryCommandLBSim(
+            file_path=ee_command_path,
+            control_dt=control_dt,
+            kp_dx=ee_kp_dx,
+            kp_dz=ee_kp_dz,
+            kp0_threshold_range=ee_kp0_threshold_range,
+            cycle_duration_s=ee_cycle_duration_s,
+            traj_duration_min_s=ee_traj_duration_min_s,
+            traj_duration_max_s=ee_traj_duration_max_s,
+            seed=ee_command_seed,
+        )
+    else:
+        raise ValueError(f"Unsupported ee_command_mode: {ee_command_mode}")
 
     ee_cur_init_lb = compute_ee_current_kp_lb()
-    ee_cmd_sampler.reset(initial_kps_lb=ee_cur_init_lb, sample_first=True)
+    sample_first = False if args.mode == "pd-stand" else True
+    ee_cmd_sampler.reset(initial_kps_lb=ee_cur_init_lb, sample_first=sample_first)
     ee_cmd_lb_current = ee_cmd_sampler.command.copy()
 
-    # 8) Build one-step observation
     last_action = np.zeros(action_dim, dtype=np.float32)
 
     def build_obs_step(ee_cmd_lb: np.ndarray) -> np.ndarray:
@@ -742,18 +797,17 @@ if __name__ == "__main__":
 
         obs = np.concatenate(
             [
-                base_ang_vel_b,          # 3
-                projected_gravity_b,     # 3
-                base_command,            # 3
-                ee_cmd_lb,               # 9
-                ee_cur_lb,               # 9
-                ee_err_lb,               # 9
-                joint_pos_leg_rel,       # 12
-                joint_pos_arm_rel,       # 6
-                joint_vel_leg,           # 12
-                joint_vel_arm,           # 6
-                joint_vel_wheel,         # 4
-                last_action,             # 22
+                base_ang_vel_b,      # 3
+                projected_gravity_b, # 3
+                base_command,        # 3
+                ee_cmd_lb,           # 9
+                ee_err_lb,           # 9
+                joint_pos_leg_rel,   # 12
+                joint_pos_arm_rel,   # 6
+                joint_vel_leg,       # 12
+                joint_vel_arm,       # 6
+                joint_vel_wheel,     # 4
+                last_action,         # 22
             ],
             dtype=np.float32,
         )
@@ -761,7 +815,6 @@ if __name__ == "__main__":
         assert obs.shape[0] == obs_dim_per_step, f"Obs dim mismatch: {obs.shape[0]} vs {obs_dim_per_step}"
         return obs
 
-    # 9) Initial targets and per-term history
     leg_target = default_leg_pos.copy()
     arm_target = default_arm_pos.copy()
     wheel_cmd = np.zeros(4, dtype=np.float32)
@@ -774,7 +827,6 @@ if __name__ == "__main__":
     obs0_projected_gravity = obs0[i:i + 3]; i += 3
     obs0_base_cmd = obs0[i:i + 3]; i += 3
     obs0_ee_cmd = obs0[i:i + 9]; i += 9
-    obs0_ee_cur = obs0[i:i + 9]; i += 9
     obs0_ee_err = obs0[i:i + 9]; i += 9
     obs0_joint_pos_leg = obs0[i:i + 12]; i += 12
     obs0_joint_pos_arm = obs0[i:i + 6]; i += 6
@@ -787,7 +839,6 @@ if __name__ == "__main__":
     projected_gravity_hist = deque(maxlen=history_length)
     base_cmd_hist = deque(maxlen=history_length)
     ee_cmd_hist = deque(maxlen=history_length)
-    ee_cur_hist = deque(maxlen=history_length)
     ee_err_hist = deque(maxlen=history_length)
     joint_pos_leg_hist = deque(maxlen=history_length)
     joint_pos_arm_hist = deque(maxlen=history_length)
@@ -801,7 +852,6 @@ if __name__ == "__main__":
         projected_gravity_hist.append(obs0_projected_gravity.copy())
         base_cmd_hist.append(obs0_base_cmd.copy())
         ee_cmd_hist.append(obs0_ee_cmd.copy())
-        ee_cur_hist.append(obs0_ee_cur.copy())
         ee_err_hist.append(obs0_ee_err.copy())
         joint_pos_leg_hist.append(obs0_joint_pos_leg.copy())
         joint_pos_arm_hist.append(obs0_joint_pos_arm.copy())
@@ -810,7 +860,6 @@ if __name__ == "__main__":
         joint_vel_wheel_hist.append(obs0_joint_vel_wheel.copy())
         last_action_hist.append(obs0_last_action.copy())
 
-    # 10) Main simulation loop
     counter = 0
     policy_tick = 0
     sim_time = 0.0
@@ -833,7 +882,6 @@ if __name__ == "__main__":
                 blend = 1.0
             blend = float(np.clip(blend, 0.0, 1.0))
 
-            # Low-level control (external PD)
             qpos_mujoco = d.qpos[7:7 + len(mujoco_joint_names)].copy().astype(np.float32)
             qvel_mujoco = d.qvel[6:6 + len(mujoco_joint_names)].copy().astype(np.float32)
 
@@ -876,9 +924,11 @@ if __name__ == "__main__":
             viewer.cam.lookat[:] = d.qpos[:3]
             sim_time += simulation_dt
 
-            # Policy inference
             if counter % control_decimation == 0:
-                ee_cmd_lb_current = ee_cmd_sampler.update()
+                if args.mode == "pd-stand":
+                    ee_cmd_lb_current = ee_cmd_sampler.command.copy()
+                else:
+                    ee_cmd_lb_current = ee_cmd_sampler.update()
 
                 obs_step = build_obs_step(ee_cmd_lb_current)
 
@@ -887,7 +937,6 @@ if __name__ == "__main__":
                 curr_projected_gravity = obs_step[i:i + 3]; i += 3
                 curr_base_cmd = obs_step[i:i + 3]; i += 3
                 curr_ee_cmd = obs_step[i:i + 9]; i += 9
-                curr_ee_cur = obs_step[i:i + 9]; i += 9
                 curr_ee_err = obs_step[i:i + 9]; i += 9
                 curr_joint_pos_leg = obs_step[i:i + 12]; i += 12
                 curr_joint_pos_arm = obs_step[i:i + 6]; i += 6
@@ -900,7 +949,6 @@ if __name__ == "__main__":
                 projected_gravity_hist.append(curr_projected_gravity.copy())
                 base_cmd_hist.append(curr_base_cmd.copy())
                 ee_cmd_hist.append(curr_ee_cmd.copy())
-                ee_cur_hist.append(curr_ee_cur.copy())
                 ee_err_hist.append(curr_ee_err.copy())
                 joint_pos_leg_hist.append(curr_joint_pos_leg.copy())
                 joint_pos_arm_hist.append(curr_joint_pos_arm.copy())
@@ -915,7 +963,6 @@ if __name__ == "__main__":
                         np.array(projected_gravity_hist).reshape(-1),
                         np.array(base_cmd_hist).reshape(-1),
                         np.array(ee_cmd_hist).reshape(-1),
-                        np.array(ee_cur_hist).reshape(-1),
                         np.array(ee_err_hist).reshape(-1),
                         np.array(joint_pos_leg_hist).reshape(-1),
                         np.array(joint_pos_arm_hist).reshape(-1),
@@ -932,10 +979,7 @@ if __name__ == "__main__":
                 if args.mode == "pd-stand":
                     action = np.zeros(action_dim, dtype=np.float32)
                 else:
-                    action = sess.run(
-                        [output_name],
-                        {input_name: obs_stack[None, :]},
-                    )[0][0].astype(np.float32)
+                    action = sess.run([output_name], {input_name: obs_stack[None, :]})[0][0].astype(np.float32)
 
                 last_action[:] = action
 
@@ -960,10 +1004,8 @@ if __name__ == "__main__":
 
                 policy_tick += 1
 
-            # Visualization
             update_custom_visualization(viewer, ee_cmd_lb_current)
 
-            # Logging
             if counter % 200 == 0:
                 current_leg_pos = d.qpos[7:7 + len(mujoco_joint_names)].copy()[leg_mujoco_indices]
                 current_arm_pos = d.qpos[7:7 + len(mujoco_joint_names)].copy()[arm_mujoco_indices]
@@ -971,11 +1013,19 @@ if __name__ == "__main__":
                 arm_err = arm_target - current_arm_pos
                 ee_err_norm = np.linalg.norm((ee_cmd_lb_current - compute_ee_current_kp_lb()).reshape(3, 3), axis=1)
 
+                extra_cmd_info = ""
+                if ee_command_mode == "presampled":
+                    extra_cmd_info = (
+                        f" | kp0_th={ee_cmd_sampler.current_kp0_threshold:.3f}"
+                        f" | traj={ee_cmd_sampler.current_traj_duration_s:.2f}s"
+                        f" | hold={ee_cmd_sampler.current_hold_duration_s:.2f}s"
+                    )
+
                 print(
                     f"[{counter:6d}] "
                     f"t={sim_time:6.2f}s | "
                     f"z={d.qpos[2]:.3f} | "
-                    f"blend={blend:.2f} | "
+                    f"blend={blend:.2f}{extra_cmd_info} | "
                     f"leg_act=[{last_action[leg_action_indices].min():+.2f},{last_action[leg_action_indices].max():+.2f}] | "
                     f"arm_act=[{last_action[arm_action_indices].min():+.2f},{last_action[arm_action_indices].max():+.2f}] | "
                     f"wheel_act=[{last_action[wheel_action_indices].min():+.2f},{last_action[wheel_action_indices].max():+.2f}]"

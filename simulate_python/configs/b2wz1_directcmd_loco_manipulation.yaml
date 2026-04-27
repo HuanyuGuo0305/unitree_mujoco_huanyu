@@ -1,31 +1,23 @@
-# File paths
-policy_path: "exported_policy/b2wz1_loco_manipulation/policy_lowgains_2.onnx"
+policy_path: "exported_policy/b2wz1_directcmd_loco_manipulation/policy_5.onnx"
 xml_path: "unitree_robots/b2wz1/ground.xml"
 
-# Simulation
 simulation_duration: 60.0
 simulation_dt: 0.005
 control_decimation: 4
 
-# Startup smooth blend
 startup_hold_s: 1.0
 startup_blend_s: 2.0
 
-# Dimensions
-# Current training observation:
-# 3 + 3 + 3 + 9 + 9 + 12 + 6 + 12 + 6 + 4 + 22 = 89
 history_length: 5
 obs_dim_per_step: 89
 obs_dim: 445
 action_dim: 22
 
-# Commands / root init
-base_command: [0.5, 0.0, 0.0]   # [vx, vy, wz]
+base_command: [0.0, 0.0, 0.0]
 
 root_pos: [0.0, 0.0, 0.6017]
 root_quat_wxyz: [1.0, 0.0, 0.0, 0.0]
 
-# Default joint position in MuJoCo order (23)
 default_joint_pos: [
    0.1, 0.8, -1.5, 0.0,
   -0.1, 0.8, -1.5, 0.0,
@@ -34,13 +26,11 @@ default_joint_pos: [
    0.0, 1.48, -1.0, -0.54, 0.0, 0.0, 0.0
 ]
 
-# Joint gains in MuJoCo order (23)
 kps: [
   160.0, 160.0, 160.0,   0.0,
   160.0, 160.0, 160.0,   0.0,
   160.0, 160.0, 160.0,   0.0,
   160.0, 160.0, 160.0,   0.0,
-   # 30.0,  50.0,  50.0,  30.0,  30.0,  30.0,  30.0
    76.8, 122.9, 122.9, 76.8, 61.4, 51.2, 51.2
 ]
 
@@ -49,21 +39,13 @@ kds: [
    5.0, 5.0, 5.0, 10.0,
    5.0, 5.0, 5.0, 10.0,
    5.0, 5.0, 5.0, 10.0,
-   # 3.0, 4.0, 4.0, 3.0, 3.0, 3.0, 3.0
    5.12, 6.4, 6.4, 5.12, 5.12, 5.12, 5.12
 ]
 
-# Notes:
-# Z1 runtime PD gains
-# arm_kps_runtime: [3.0, 4.8, 4.8, 3.0, 2.4, 2.0]
-# arm_kds_runtime: [400.0, 500.0, 500.0, 400.0, 400.0, 400.0]
-
-# Action scales
 leg_action_scale: 0.25
-arm_action_scale: [0.20, 0.20, 0.20, 0.20, 0.20, 0.20]
+arm_action_scale: [0.10, 0.10, 0.10, 0.10, 0.10, 0.10]
 wheel_action_scale: 4.0
 
-# Control limits
 leg_torque_limits: [
   200.0, 200.0, 320.0,
   200.0, 200.0, 320.0,
@@ -73,29 +55,20 @@ leg_torque_limits: [
 
 arm_torque_limits: [30.0, 60.0, 30.0, 30.0, 30.0, 30.0]
 gripper_torque_limit: 30.0
-
 wheel_velocity_limits: [50.0, 50.0, 50.0, 50.0]
 
-# End-effector command sampler
 ee_body: "gripperStator"
-ee_command_mode: "presampled"   # "presampled" or "sequential"
+ee_command_mode: "direct"
 ee_command_path: "utilities/data/reachable_kp0kp1kp2_lb.npy"
 
 ee_kp_dx: 0.30
 ee_kp_dz: 0.30
 ee_command_seed: 0
+ee_cycle_duration_s: 8.0
 
-# Presampled mode settings
-ee_kp0_threshold_range: [0.20, 0.30]
-ee_cycle_duration_s: 6.0
-ee_traj_duration_min_s: 4.0
-ee_traj_duration_max_s: 5.0
-
-# Sequential mode settings
 ee_sequential_traj_duration_s: 2.0
 ee_sequential_hold_duration_s: 1.0
 
-# Visualization
 vis_ee_target: true
 vis_ee_target_axis_len: 0.20
 vis_ee_target_axis_radius: 0.01

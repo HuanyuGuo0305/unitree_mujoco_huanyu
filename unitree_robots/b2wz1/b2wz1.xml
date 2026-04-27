@@ -17,7 +17,7 @@
 
     <default class="z1">
       <!-- Align arm passive dynamics with URDF per-joint below; keep only armature here -->
-      <joint damping="0" frictionloss="0.01" armature="0.01"/>
+      <joint damping="0" frictionloss="0.01" armature="0.02"/>
       <motor ctrlrange="-30 30"/>
       <default class="visual_z1">
         <geom type="mesh" group="2" contype="0" conaffinity="0"/>

@@ -1,4 +1,4 @@
-policy_path: "exported_policy/b2wz1_directcmd_loco_manipulation/policy_8.onnx"
+policy_path: "exported_policy/b2wz1_plb_loco_manipulation/policy_2.onnx"
 xml_path: "unitree_robots/b2wz1/ground.xml"
 
 simulation_duration: 60.0
@@ -13,7 +13,7 @@ obs_dim_per_step: 89
 obs_dim: 445
 action_dim: 22
 
-base_command: [0.5, 0.0, 0.0]
+base_command: [0.0, 0.0, 0.0]
 
 root_pos: [0.0, 0.0, 0.6017]
 root_quat_wxyz: [1.0, 0.0, 0.0, 0.0]
@@ -27,19 +27,19 @@ default_joint_pos: [
 ]
 
 kps: [
-  160.0, 160.0, 160.0,   0.0,
-  160.0, 160.0, 160.0,   0.0,
-  160.0, 160.0, 160.0,   0.0,
-  160.0, 160.0, 160.0,   0.0,
+  160.0, 160.0, 240.0,   0.0,
+  160.0, 160.0, 240.0,   0.0,
+  160.0, 160.0, 240.0,   0.0,
+  160.0, 160.0, 240.0,   0.0,
    76.8, 122.9, 122.9, 76.8, 61.4, 51.2, 51.2
 ]
 
 kds: [
-   5.0, 5.0, 5.0, 10.0,
-   5.0, 5.0, 5.0, 10.0,
-   5.0, 5.0, 5.0, 10.0,
-   5.0, 5.0, 5.0, 10.0,
-   5.12, 6.4, 6.4, 5.12, 5.12, 5.12, 5.12
+   5.0, 5.0, 8.0, 10.0,
+   5.0, 5.0, 8.0, 10.0,
+   5.0, 5.0, 8.0, 10.0,
+   5.0, 5.0, 8.0, 10.0,
+   3.0, 4.0, 4.0, 3.0, 3.0, 3.0, 3.0
 ]
 
 leg_action_scale: 0.25
@@ -59,7 +59,12 @@ wheel_velocity_limits: [50.0, 50.0, 50.0, 50.0]
 
 ee_body: "gripperStator"
 ee_command_mode: "direct"
-ee_command_path: "utilities/data/reachable_kp0kp1kp2_lb.npy"
+ee_command_path: "utilities/data/reachable_kp0kp1kp2_plb.npy"
+
+# PLB frame:
+#   origin = [base_x, base_y, ee_ground_z]
+#   orientation = yaw-only(base_quat)
+ee_ground_z: 0.0
 
 ee_kp_dx: 0.30
 ee_kp_dz: 0.30

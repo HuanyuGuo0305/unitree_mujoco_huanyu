@@ -9,15 +9,15 @@ XML_PATH = "../unitree_robots/b2wz1/ground.xml"
 # Default joint positions (23)
 default_joint_pos = np.array([
     # FL
-    0.1, 0.8, -1.5, 0.0,
+    0.1, 1.0, -2.5, 0.0,
     # FR
-   -0.1, 0.8, -1.5, 0.0,
+   -0.1, 1.0, -2.5, 0.0,
     # RL
     0.1, 1.0, -1.5, 0.0,
     # RR
    -0.1, 1.0, -1.5, 0.0,
     # arm joint1..6
-    0.0, 1.48, -1.0, -0.54, 0.0, 0.0,
+    0.0, 2.5, -1.5, -0.54, 0.0, 0.0,
     # gripper
     0.0
 ], dtype=np.float32)

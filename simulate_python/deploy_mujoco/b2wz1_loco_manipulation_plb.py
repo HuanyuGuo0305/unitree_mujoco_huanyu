@@ -282,7 +282,7 @@ if __name__ == "__main__":
     vis_ee_target_alpha = float(cfg.get("vis_ee_target_alpha", 0.9))
     vis_ee_target_show_current = bool(cfg.get("vis_ee_target_show_current", True))
 
-    assert obs_dim_per_step == 89, f"Expected obs_dim_per_step=89, got {obs_dim_per_step}"
+    assert obs_dim_per_step == 80, f"Expected obs_dim_per_step=80, got {obs_dim_per_step}"
     assert obs_dim == obs_dim_per_step * history_length, f"Expected obs_dim={obs_dim_per_step * history_length}, got {obs_dim}"
     assert action_dim == 22, f"Expected action_dim=22, got {action_dim}"
     assert len(default_joint_pos) == 23
@@ -608,9 +608,6 @@ if __name__ == "__main__":
         gravity_w = np.array([0.0, 0.0, -1.0], dtype=np.float32)
         projected_gravity_b = quat_rotate_inverse_numpy(base_quat_w, gravity_w).astype(np.float32)
 
-        ee_cur_plb = compute_ee_current_kp_plb()
-        ee_err_plb = (ee_cmd_plb - ee_cur_plb).astype(np.float32)
-
         joint_pos_policy = qpos_mujoco[policy_joint_pos_mujoco_indices]
         joint_pos_rel = joint_pos_policy - default_joint_pos_policy_pos
         joint_pos_leg_rel = joint_pos_rel[:12]
@@ -627,7 +624,6 @@ if __name__ == "__main__":
                 projected_gravity_b,  # 3
                 base_command,         # 3
                 ee_cmd_plb,           # 9
-                ee_err_plb,           # 9
                 joint_pos_leg_rel,    # 12
                 joint_pos_arm_rel,    # 6
                 joint_vel_leg,        # 12
@@ -653,7 +649,6 @@ if __name__ == "__main__":
     obs0_projected_gravity = obs0[i:i + 3]; i += 3
     obs0_base_cmd = obs0[i:i + 3]; i += 3
     obs0_ee_cmd = obs0[i:i + 9]; i += 9
-    obs0_ee_err = obs0[i:i + 9]; i += 9
     obs0_joint_pos_leg = obs0[i:i + 12]; i += 12
     obs0_joint_pos_arm = obs0[i:i + 6]; i += 6
     obs0_joint_vel_leg = obs0[i:i + 12]; i += 12
@@ -665,7 +660,6 @@ if __name__ == "__main__":
     projected_gravity_hist = deque(maxlen=history_length)
     base_cmd_hist = deque(maxlen=history_length)
     ee_cmd_hist = deque(maxlen=history_length)
-    ee_err_hist = deque(maxlen=history_length)
     joint_pos_leg_hist = deque(maxlen=history_length)
     joint_pos_arm_hist = deque(maxlen=history_length)
     joint_vel_leg_hist = deque(maxlen=history_length)
@@ -678,7 +672,6 @@ if __name__ == "__main__":
         projected_gravity_hist.append(obs0_projected_gravity.copy())
         base_cmd_hist.append(obs0_base_cmd.copy())
         ee_cmd_hist.append(obs0_ee_cmd.copy())
-        ee_err_hist.append(obs0_ee_err.copy())
         joint_pos_leg_hist.append(obs0_joint_pos_leg.copy())
         joint_pos_arm_hist.append(obs0_joint_pos_arm.copy())
         joint_vel_leg_hist.append(obs0_joint_vel_leg.copy())
@@ -763,7 +756,6 @@ if __name__ == "__main__":
                 curr_projected_gravity = obs_step[i:i + 3]; i += 3
                 curr_base_cmd = obs_step[i:i + 3]; i += 3
                 curr_ee_cmd = obs_step[i:i + 9]; i += 9
-                curr_ee_err = obs_step[i:i + 9]; i += 9
                 curr_joint_pos_leg = obs_step[i:i + 12]; i += 12
                 curr_joint_pos_arm = obs_step[i:i + 6]; i += 6
                 curr_joint_vel_leg = obs_step[i:i + 12]; i += 12
@@ -775,7 +767,6 @@ if __name__ == "__main__":
                 projected_gravity_hist.append(curr_projected_gravity.copy())
                 base_cmd_hist.append(curr_base_cmd.copy())
                 ee_cmd_hist.append(curr_ee_cmd.copy())
-                ee_err_hist.append(curr_ee_err.copy())
                 joint_pos_leg_hist.append(curr_joint_pos_leg.copy())
                 joint_pos_arm_hist.append(curr_joint_pos_arm.copy())
                 joint_vel_leg_hist.append(curr_joint_vel_leg.copy())
@@ -789,7 +780,6 @@ if __name__ == "__main__":
                         np.array(projected_gravity_hist).reshape(-1),
                         np.array(base_cmd_hist).reshape(-1),
                         np.array(ee_cmd_hist).reshape(-1),
-                        np.array(ee_err_hist).reshape(-1),
                         np.array(joint_pos_leg_hist).reshape(-1),
                         np.array(joint_pos_arm_hist).reshape(-1),
                         np.array(joint_vel_leg_hist).reshape(-1),

@@ -9,9 +9,9 @@ XML_PATH = "../unitree_robots/b2wz1/ground.xml"
 # Default joint positions (23)
 default_joint_pos = np.array([
     # FL
-    0.1, 1.0, -2.5, 0.0,
+    0.1, 0.7, -1.2, 0.0,
     # FR
-   -0.1, 1.0, -2.5, 0.0,
+   -0.1, 0.7, -1.2, 0.0,
     # RL
     0.1, 1.0, -1.5, 0.0,
     # RR

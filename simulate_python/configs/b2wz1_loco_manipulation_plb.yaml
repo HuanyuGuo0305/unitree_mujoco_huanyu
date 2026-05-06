@@ -1,4 +1,4 @@
-policy_path: "exported_policy/b2wz1_plb_loco_manipulation/policy.onnx"
+policy_path: "exported_policy/b2wz1_plb_loco_manipulation/policy_1.onnx"
 xml_path: "unitree_robots/b2wz1/ground.xml"
 
 simulation_duration: 60.0
@@ -39,7 +39,7 @@ kds: [
    8.0, 8.0, 12.0, 10.0,
    8.0, 8.0, 12.0, 10.0,
    8.0, 8.0, 12.0, 10.0,
-   2.0, 3.0, 2.0, 2.0, 2.0, 2.0, 2.0
+   3.0, 3.0, 2.0, 2.0, 2.0, 2.0, 2.0
 ]
 
 leg_action_scale: 0.25

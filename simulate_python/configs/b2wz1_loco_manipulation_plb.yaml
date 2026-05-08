@@ -59,7 +59,7 @@ wheel_velocity_limits: [50.0, 50.0, 50.0, 50.0]
 
 ee_body: "gripperStator"
 ee_command_mode: "direct"
-ee_command_path: "utilities/data/reachable_kp0kp1kp2_plb_wholebody.npy"
+ee_command_path: "utilities/data/reachable_kp0kp1kp2_plb_wholebody_v2.npy"
 
 # PLB frame:
 #   origin = [base_x, base_y, ee_ground_z]

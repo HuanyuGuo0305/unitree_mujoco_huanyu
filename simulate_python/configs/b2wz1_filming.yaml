@@ -1,0 +1,165 @@
+policy_path: "exported_policy/b2wz1_plb_loco_manipulation/policy.onnx"
+xml_path: "unitree_robots/b2wz1/ground.xml"
+
+simulation_duration: 60.0
+simulation_dt: 0.005
+control_decimation: 4
+
+startup_hold_s: 1.0
+startup_blend_s: 2.0
+
+history_length: 5
+obs_dim_per_step: 80
+obs_dim: 400
+action_dim: 22
+
+root_pos: [0.0, 0.0, 0.6017]
+root_quat_wxyz: [1.0, 0.0, 0.0, 0.0]
+
+default_joint_pos: [
+   0.1, 0.8, -1.5, 0.0,
+  -0.1, 0.8, -1.5, 0.0,
+   0.1, 1.0, -1.5, 0.0,
+  -0.1, 1.0, -1.5, 0.0,
+   0.0, 1.48, -1.0, -0.54, 0.0, 0.0, 0.0
+]
+
+kps: [
+  200.0, 200.0, 300.0,   0.0,
+  200.0, 200.0, 300.0,   0.0,
+  200.0, 200.0, 300.0,   0.0,
+  200.0, 200.0, 300.0,   0.0,
+   76.8, 122.88, 76.8, 76.8, 76.8, 76.8, 76.8
+]
+
+kds: [
+   8.0, 8.0, 12.0, 10.0,
+   8.0, 8.0, 12.0, 10.0,
+   8.0, 8.0, 12.0, 10.0,
+   8.0, 8.0, 12.0, 10.0,
+   3.0, 3.0, 2.0, 2.0, 2.0, 2.0, 2.0
+]
+
+leg_action_scale: 0.25
+arm_action_scale: [0.10, 0.10, 0.10, 0.10, 0.10, 0.10]
+wheel_action_scale: 4.0
+
+leg_torque_limits: [
+  200.0, 200.0, 320.0,
+  200.0, 200.0, 320.0,
+  200.0, 200.0, 320.0,
+  200.0, 200.0, 320.0
+]
+
+arm_torque_limits: [30.0, 60.0, 30.0, 30.0, 30.0, 30.0]
+gripper_torque_limit: 30.0
+wheel_velocity_limits: [50.0, 50.0, 50.0, 50.0]
+
+ee_body: "gripperStator"
+
+ee_ground_z: 0.0
+
+ee_kp_dx: 0.30
+ee_kp_dz: 0.30
+
+# Options:
+#   forward_tracking
+#   orbit
+#   low_tracking
+#   crane_up
+#   walk_by
+filming_shot: "walk_by"
+
+filming:
+  target_world: [3.0, 1.0, 1.0]
+  lookat_up_world: [0.0, 0.0, 1.0]
+
+  max_vx: 0.40
+  max_vy: 0.30
+  max_wz: 0.35
+
+  # 1) Forward tracking
+  forward_vx: 0.25
+  forward_vy: 0.00
+  forward_wz: 0.00
+  forward_anchor_x: 0.25
+  forward_kp0_y: 0.25
+  forward_kp0_z: 1.00
+  forward_kp0_x_min: -0.90
+  forward_kp0_x_max: 0.90
+  forward_kp0_x_fallback: 0.50
+
+  # 2) Orbit shot
+  orbit_target_world: [0.0, 1.5, 1.0]
+  orbit_desired_distance: 1.50
+  orbit_angular_speed: 0.25
+  orbit_direction: 1.0
+  orbit_position_kp: 0.80
+  orbit_yaw_kp: 1.60
+  orbit_yaw_ff: true
+  orbit_kp0_x: 0.30
+  orbit_kp0_y: 0.50
+  orbit_kp0_z: 1.00
+
+  # 3) Low tracking shot
+  low_target_world: [8.0, 0.0, 0.5]
+  low_vx: 0.40
+  low_vy: 0.00
+  low_wz: 0.00
+  low_kp0_x: 0.90
+  low_kp0_y: 0.00
+  low_kp0_z: 0.20
+
+  # 4) Crane-up shot
+  crane_target_world: [8.0, 0.0, 0.3]
+  crane_prepare_s: 5.0
+  transition_s: 10.0
+  crane_vx: 0.30
+  crane_vy: 0.00
+  crane_wz: 0.00
+  crane_kp0_x: 0.65
+  crane_kp0_y: 0.00
+  crane_start_z: 0.25
+  crane_end_z: 1.35
+  crane_start_kp0: [0.65, 0.00, 0.25]
+  crane_end_kp0: [0.65, 0.00, 1.35]
+
+  # 5) Walk-by shot
+  # Target starts left-front of robot and moves in world +x at 0.30 m/s.
+  # Robot receives the same forward base command.
+  walkby_target_start_world: [0.5, 1.5, 1.2]
+  walkby_target_vx: 0.30
+  walkby_target_vy: 0.00
+  walkby_target_vz: 0.00
+
+  walkby_vx: 0.30
+  walkby_vy: 0.00
+  walkby_wz: 0.00
+
+  # Fixed EE/camera position in PLB/base-yaw frame.
+  # Target is left-front, so y > 0 keeps kp0 slightly left-front too.
+  walkby_kp0_x: 0.30
+  walkby_kp0_y: 0.40
+  walkby_kp0_z: 1.20
+  walkby_kp0: [0.30, 0.55, 1.20]
+
+  command_filter_tau_s: 0.15
+
+vis_ee_target: true
+vis_ee_target_axis_len: 0.20
+vis_ee_target_axis_radius: 0.01
+vis_ee_target_sphere_size: 0.03
+vis_ee_target_alpha: 0.9
+vis_ee_target_show_current: true
+
+vis_world_target: true
+vis_world_target_sphere_size: 0.06
+vis_world_target_alpha: 0.95
+vis_world_target_ground_marker: true
+vis_world_target_ground_radius: 0.015
+
+
+record_commands: true
+record_duration_s: 15.0
+record_dir: "utilities/data"
+record_name: "b2wz1_filming_walk_by.npz"

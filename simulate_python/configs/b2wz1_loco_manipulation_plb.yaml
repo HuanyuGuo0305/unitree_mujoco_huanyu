@@ -1,4 +1,4 @@
-policy_path: "exported_policy/b2wz1_plb_loco_manipulation/policy_1.onnx"
+policy_path: "exported_policy/b2wz1_plb_loco_manipulation/policy.onnx"
 xml_path: "unitree_robots/b2wz1/ground.xml"
 
 simulation_duration: 60.0

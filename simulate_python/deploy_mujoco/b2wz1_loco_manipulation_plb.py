@@ -850,6 +850,7 @@ if __name__ == "__main__":
                     f"max_arm_err={np.max(np.abs(arm_err)):.4f} | "
                     f"ee_err_plb=[{ee_err_norm[0]:.4f},{ee_err_norm[1]:.4f},{ee_err_norm[2]:.4f}] | "
                     f"max_ctrl={np.max(np.abs(d.ctrl[:])):.2f}"
+                    f"ee_cmd_plb=[{ee_cmd_plb_current[0]:.3f},{ee_cmd_plb_current[1]:.3f},{ee_cmd_plb_current[2]:.3f}"
                 )
 
             counter += 1

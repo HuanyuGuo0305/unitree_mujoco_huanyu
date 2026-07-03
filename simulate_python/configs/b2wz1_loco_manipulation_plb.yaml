@@ -1,4 +1,5 @@
-policy_path: "exported_policy/b2wz1_plb_loco_manipulation/policy_5.onnx"
+# If use policy_pickup_1/2/3.onnx, then set default joint pos of joint6 to 1.57.
+policy_path: "exported_policy/b2wz1_plb_loco_manipulation/policy_pickup_3.onnx"
 xml_path: "unitree_robots/b2wz1/ground.xml"
 
 simulation_duration: 180.0
@@ -23,14 +24,14 @@ default_joint_pos: [
   -0.1, 0.8, -1.5, 0.0,
    0.1, 1.0, -1.5, 0.0,
   -0.1, 1.0, -1.5, 0.0,
-   0.0, 1.48, -1.0, -0.54, 0.0, 0.0, 0.0
+   0.0, 1.48, -1.0, -0.54, 0.0, 1.57, 0.0
 ]
 
 kps: [
-  200.0, 200.0, 300.0,   0.0,
-  200.0, 200.0, 300.0,   0.0,
-  200.0, 200.0, 300.0,   0.0,
-  200.0, 200.0, 300.0,   0.0,
+  200.0, 200.0, 300.0,  0.0,
+  200.0, 200.0, 300.0,  0.0,
+  200.0, 200.0, 300.0,  0.0,
+  200.0, 200.0, 300.0,  0.0,
    76.8, 122.88, 89.6, 76.8, 76.8, 76.8, 76.8
 ]
 
@@ -59,7 +60,7 @@ wheel_velocity_limits: [50.0, 50.0, 50.0, 50.0]
 
 ee_body: "gripperStator"
 ee_command_mode: "direct"
-ee_command_path: "utilities/data/reachable_kp0kp1kp2_plb_wholebody_pickup_v2.npy"
+ee_command_path: "utilities/data/keypoints_plb_pickup.npy"
 
 # PLB frame:
 #   origin = [base_x, base_y, ee_ground_z]

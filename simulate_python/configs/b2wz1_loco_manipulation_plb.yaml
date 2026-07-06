@@ -1,5 +1,5 @@
-# If use policy_pickup_1/2/3.onnx, then set default joint pos of joint6 to 1.57.
-policy_path: "exported_policy/b2wz1_plb_loco_manipulation/policy_pickup_3.onnx"
+# If use policy_pickup.onnx, then set default joint pos of joint6 to 1.57.
+policy_path: "exported_policy/b2wz1_plb_loco_manipulation/policy_pickup.onnx"
 xml_path: "unitree_robots/b2wz1/ground.xml"
 
 simulation_duration: 180.0
@@ -32,7 +32,7 @@ kps: [
   200.0, 200.0, 300.0,  0.0,
   200.0, 200.0, 300.0,  0.0,
   200.0, 200.0, 300.0,  0.0,
-   76.8, 122.88, 89.6, 76.8, 76.8, 76.8, 76.8
+   76.8,  89.6,  89.6,  76.8, 76.8, 76.8, 76.8
 ]
 
 kds: [
@@ -40,11 +40,21 @@ kds: [
    8.0, 8.0, 12.0, 10.0,
    8.0, 8.0, 12.0, 10.0,
    8.0, 8.0, 12.0, 10.0,
-   3.0, 3.0, 3.0, 2.0, 2.0, 2.0, 2.0
+   4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0
 ]
 
 leg_action_scale: 0.25
 arm_action_scale: [0.10, 0.10, 0.10, 0.10, 0.10, 0.10]
+
+# Arm target rate limiter.
+# If true, policy arm action is first converted to raw joint-position target:
+#   raw_arm_target = default_arm_pos + blend * arm_action_scale * arm_action
+# Then the final arm target sent to the PD controller is limited by:
+#   arm_target[t] = arm_target[t-1] + clip(raw - prev, +/- arm_target_rate_limit * control_dt)
+# Unit: rad/s, order: [joint1, joint2, joint3, joint4, joint5, joint6]
+enable_arm_target_rate_limit: true
+arm_target_rate_limit: [0.2, 0.2, 0.2, 0.2, 0.2, 0.2]
+
 wheel_action_scale: 4.0
 
 leg_torque_limits: [

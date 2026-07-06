@@ -256,6 +256,12 @@ if __name__ == "__main__":
     arm_action_scale = np.array(cfg["arm_action_scale"], dtype=np.float32)
     wheel_action_scale = float(cfg["wheel_action_scale"])
 
+    enable_arm_target_rate_limit = bool(cfg.get("enable_arm_target_rate_limit", False))
+    arm_target_rate_limit = np.array(
+        cfg.get("arm_target_rate_limit", [np.inf] * 6),
+        dtype=np.float32,
+    )
+
     leg_torque_limits = np.array(cfg["leg_torque_limits"], dtype=np.float32)
     arm_torque_limits = np.array(cfg["arm_torque_limits"], dtype=np.float32)
     gripper_torque_limit = float(cfg.get("gripper_torque_limit", 30.0))
@@ -292,6 +298,13 @@ if __name__ == "__main__":
     assert len(arm_torque_limits) == 6
     assert len(wheel_velocity_limits) == 4
     assert arm_action_scale.shape == (6,), f"Expected arm_action_scale shape (6,), got {arm_action_scale.shape}"
+    assert arm_target_rate_limit.shape == (6,), (
+        f"Expected arm_target_rate_limit shape (6,), got {arm_target_rate_limit.shape}"
+    )
+    if enable_arm_target_rate_limit and np.any(arm_target_rate_limit <= 0.0):
+        raise ValueError(
+            f"arm_target_rate_limit must be positive when enabled, got {arm_target_rate_limit}."
+        )
 
     ee_command_mode = str(cfg.get("ee_command_mode", "direct"))
 
@@ -307,6 +320,9 @@ if __name__ == "__main__":
     print(f"Action dim:      {action_dim}")
     print(f"Leg scale:       {leg_action_scale}")
     print(f"Arm scales:      {arm_action_scale}")
+    print(f"Arm target RL:   {enable_arm_target_rate_limit}")
+    if enable_arm_target_rate_limit:
+        print(f"Arm target rate: {arm_target_rate_limit} rad/s")
     print(f"Wheel scale:     {wheel_action_scale}")
     print(f"EE mode:         {ee_command_mode}")
     print(f"EE frame:        PLB")
@@ -598,6 +614,32 @@ if __name__ == "__main__":
 
     last_action = np.zeros(action_dim, dtype=np.float32)
 
+    prev_arm_target_buf = [default_arm_pos.copy().astype(np.float32)]
+
+    def apply_arm_target_rate_limit(raw_target: np.ndarray) -> np.ndarray:
+        """Rate-limit arm joint position target exactly like training action term.
+
+        Limits the final joint target, not the raw policy action:
+            limited = prev + clip(raw - prev, +/- rate_limit * control_dt)
+        """
+        raw_target = np.asarray(raw_target, dtype=np.float32).reshape(6,)
+        if not enable_arm_target_rate_limit:
+            prev_arm_target_buf[0] = raw_target.copy()
+            return raw_target.copy()
+
+        max_delta = arm_target_rate_limit * control_dt
+        prev_arm_target = prev_arm_target_buf[0]
+        delta = np.clip(raw_target - prev_arm_target, -max_delta, max_delta)
+        limited_target = (prev_arm_target + delta).astype(np.float32)
+        prev_arm_target_buf[0] = limited_target.copy()
+        return limited_target
+
+    def reset_arm_target_rate_limiter(target: np.ndarray | None = None):
+        """Reset limiter state to avoid artificial jumps during non-policy modes/startup."""
+        if target is None:
+            target = default_arm_pos
+        prev_arm_target_buf[0] = np.asarray(target, dtype=np.float32).reshape(6,).copy()
+
     def build_obs_step(ee_cmd_plb: np.ndarray) -> np.ndarray:
         qpos_mujoco = d.qpos[7:7 + len(mujoco_joint_names)].copy().astype(np.float32)
         qvel_mujoco = d.qvel[6:6 + len(mujoco_joint_names)].copy().astype(np.float32)
@@ -806,16 +848,19 @@ if __name__ == "__main__":
                 if args.mode == "pd-stand":
                     leg_target = default_leg_pos.copy()
                     arm_target = default_arm_pos.copy()
+                    reset_arm_target_rate_limiter(arm_target)
                     wheel_cmd[:] = 0.0
 
                 elif args.mode == "lock-arm-policy":
                     leg_target = default_leg_pos + blend * (leg_action_scale * leg_act)
                     arm_target = default_arm_pos.copy()
+                    reset_arm_target_rate_limiter(arm_target)
                     wheel_cmd = blend * (wheel_action_scale * wheel_act)
 
                 elif args.mode == "full-policy":
                     leg_target = default_leg_pos + blend * (leg_action_scale * leg_act)
-                    arm_target = default_arm_pos + blend * (arm_action_scale * arm_act)
+                    raw_arm_target = default_arm_pos + blend * (arm_action_scale * arm_act)
+                    arm_target = apply_arm_target_rate_limit(raw_arm_target)
                     wheel_cmd = blend * (wheel_action_scale * wheel_act)
 
                 else:
@@ -835,6 +880,8 @@ if __name__ == "__main__":
                 extra_cmd_info = ""
                 if ee_command_mode == "direct":
                     extra_cmd_info = f" | cmd_hold={ee_cycle_duration_s:.2f}s"
+                if enable_arm_target_rate_limit:
+                    extra_cmd_info += f" | arm_target_rl=on"
 
                 print(
                     f"[{counter:6d}] "

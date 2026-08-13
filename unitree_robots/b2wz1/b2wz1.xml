@@ -366,7 +366,29 @@
                                   mass="0.52603655"
                                   fullinertia="0.00038683 0.00068614 0.00066293 -3.59e-06 7.662e-05 2.09e-06"/>
                         <geom type="mesh" mesh="z1_GripperStator" class="visual_z1"/>
-                        <geom type="cylinder" size="0.0325 0.0255" pos="0 0 0" class="collision_z1"/>
+
+                        <!--
+                          Gripper stator collisions aligned with the training URDF:
+                            - six official collision meshes at the gripperStator link origin
+                            - two fixed-finger pad boxes
+                          URDF box size is full extent; MuJoCo box size is half extent.
+                          The URDF pad x=0.135 is already expressed in gripperStator local frame.
+                        -->
+                        <geom mesh="z1_GripperStator_col_1" class="z1_gripper_stator_collision"/>
+                        <geom mesh="z1_GripperStator_col_2" class="z1_gripper_stator_collision"/>
+                        <geom mesh="z1_GripperStator_col_3" class="z1_gripper_stator_collision"/>
+                        <geom mesh="z1_GripperStator_col_4" class="z1_gripper_stator_collision"/>
+                        <geom mesh="z1_GripperStator_col_5" class="z1_gripper_stator_collision"/>
+                        <geom mesh="z1_GripperStator_col_6" class="z1_gripper_stator_collision"/>
+                        <geom type="box"
+                              size="0.014 0.015 0.004"
+                              pos="0.135 -0.015 -0.0125"
+                              class="collision_z1"/>
+                        <geom type="box"
+                              size="0.014 0.015 0.004"
+                              pos="0.135 0.015 -0.0125"
+                              class="collision_z1"/>
+
                         <site name="z1_ee" pos="0 0 0"/>
 
 
@@ -376,7 +398,27 @@
                                     fullinertia="0.00017716 0.00026787 0.00035728 1.683e-05 -1.786e-05 2.62e-06"/>
                           <joint name="jointGripper" axis="0 1 0" range="-1.57079632679 0" damping="0" frictionloss="0"/>
                           <geom type="mesh" mesh="z1_GripperMover" class="visual_z1"/>
-                          <geom type="cylinder" size="0.0325 0.0255" pos="0 0 0" class="collision_z1"/>
+
+                          <!--
+                            Gripper mover collisions aligned with the training URDF:
+                              - five official collision meshes at the gripperMover link origin
+                              - two moving-finger pad boxes
+                            The pad coordinates are already expressed in gripperMover local frame.
+                          -->
+                          <geom mesh="z1_GripperMover_col_1" class="z1_gripper_mover_collision"/>
+                          <geom mesh="z1_GripperMover_col_2" class="z1_gripper_mover_collision"/>
+                          <geom mesh="z1_GripperMover_col_3" class="z1_gripper_mover_collision"/>
+                          <geom mesh="z1_GripperMover_col_4" class="z1_gripper_mover_collision"/>
+                          <geom mesh="z1_GripperMover_col_5" class="z1_gripper_mover_collision"/>
+                          <geom type="box"
+                                size="0.014 0.015 0.004"
+                                pos="0.086 -0.015 -0.0055"
+                                class="collision_z1"/>
+                          <geom type="box"
+                                size="0.014 0.015 0.004"
+                                pos="0.086 0.015 -0.0055"
+                                class="collision_z1"/>
+
                           <site name="gripperCenter" pos="0.05 0 0"/>
                         </body>
                       </body>
@@ -394,16 +436,16 @@
   <actuator>
     <motor class="b2" ctrlrange="-200 200" name="FR_hip" joint="FR_hip_joint"/>
     <motor class="b2" ctrlrange="-200 200" name="FR_thigh" joint="FR_thigh_joint"/>
-    <motor class="b2" ctrlrange="-300 300" name="FR_calf" joint="FR_calf_joint"/>
+    <motor class="b2" ctrlrange="-320 320" name="FR_calf" joint="FR_calf_joint"/>
     <motor class="b2" ctrlrange="-200 200" name="FL_hip" joint="FL_hip_joint"/>
     <motor class="b2" ctrlrange="-200 200" name="FL_thigh" joint="FL_thigh_joint"/>
-    <motor class="b2" ctrlrange="-300 300" name="FL_calf" joint="FL_calf_joint"/>
+    <motor class="b2" ctrlrange="-320 320" name="FL_calf" joint="FL_calf_joint"/>
     <motor class="b2" ctrlrange="-200 200" name="RR_hip" joint="RR_hip_joint"/>
     <motor class="b2" ctrlrange="-200 200" name="RR_thigh" joint="RR_thigh_joint"/>
-    <motor class="b2" ctrlrange="-300 300" name="RR_calf" joint="RR_calf_joint"/>
+    <motor class="b2" ctrlrange="-320 320" name="RR_calf" joint="RR_calf_joint"/>
     <motor class="b2" ctrlrange="-200 200" name="RL_hip" joint="RL_hip_joint"/>
     <motor class="b2" ctrlrange="-200 200" name="RL_thigh" joint="RL_thigh_joint"/>
-    <motor class="b2" ctrlrange="-300 300" name="RL_calf" joint="RL_calf_joint"/>
+    <motor class="b2" ctrlrange="-320 320" name="RL_calf" joint="RL_calf_joint"/>
 
     <velocity name="FR_wheel" joint="FR_wheel_joint" kv="10" ctrlrange="-50 50" forcerange="-20 20"/>
     <velocity name="FL_wheel" joint="FL_wheel_joint" kv="10" ctrlrange="-50 50" forcerange="-20 20"/>
@@ -411,7 +453,7 @@
     <velocity name="RL_wheel" joint="RL_wheel_joint" kv="10" ctrlrange="-50 50" forcerange="-20 20"/>
 
     <motor class="z1" ctrlrange="-30 30" name="motor1" joint="joint1"/>
-    <motor class="z1" ctrlrange="-30 30" name="motor2" joint="joint2"/>
+    <motor class="z1" ctrlrange="-60 60" name="motor2" joint="joint2"/>
     <motor class="z1" ctrlrange="-30 30" name="motor3" joint="joint3"/>
     <motor class="z1" ctrlrange="-30 30" name="motor4" joint="joint4"/>
     <motor class="z1" ctrlrange="-30 30" name="motor5" joint="joint5"/>

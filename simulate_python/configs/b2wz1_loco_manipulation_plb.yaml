@@ -1,5 +1,5 @@
 # If use policy_pickup.onnx, then set default joint pos of joint6 to 1.57.
-policy_path: "exported_policy/b2wz1_plb_loco_manipulation/policy_pickup.onnx"
+policy_path: "exported_policy/b2wz1_plb_loco_manipulation/policy_pickup_v2.onnx"
 xml_path: "unitree_robots/b2wz1/ground.xml"
 
 simulation_duration: 180.0
@@ -32,7 +32,7 @@ kps: [
   200.0, 200.0, 300.0,  0.0,
   200.0, 200.0, 300.0,  0.0,
   200.0, 200.0, 300.0,  0.0,
-   76.8,  89.6,  89.6,  76.8, 76.8, 76.8, 76.8
+   76.8, 115.2,  89.6,  76.8, 76.8, 76.8, 76.8
 ]
 
 kds: [
@@ -53,7 +53,7 @@ arm_action_scale: [0.10, 0.10, 0.10, 0.10, 0.10, 0.10]
 #   arm_target[t] = arm_target[t-1] + clip(raw - prev, +/- arm_target_rate_limit * control_dt)
 # Unit: rad/s, order: [joint1, joint2, joint3, joint4, joint5, joint6]
 enable_arm_target_rate_limit: true
-arm_target_rate_limit: [0.2, 0.2, 0.2, 0.2, 0.2, 0.2]
+arm_target_rate_limit: [0.20, 0.20, 0.20, 0.20, 0.20, 0.20]
 
 wheel_action_scale: 4.0
 

@@ -1,0 +1,144 @@
+# B2WZ1 hierarchical retrieval sim2sim: high-level 10 Hz + frozen low-level 50 Hz.
+# Run from unitree_mujoco/simulate_python:
+#
+#   python3 deploy_mujoco/b2wz1_hl_retrieval.py configs/b2wz1_hl_retrieval.yaml
+#
+# The script intentionally does NOT implement startup blend-in or arm-target rate limiting.
+# The low-level observation/action ordering and feature-major history layout are kept aligned
+# with the already-validated PLB low-level MuJoCo sim2sim implementation.
+
+low_policy_path: "exported_policy/b2wz1_object_retrieval/low_policy.onnx"
+high_policy_path: "exported_policy/b2wz1_object_retrieval/high_policy_2_mean.onnx"
+xml_path: "unitree_robots/b2wz1/b2wz1_retrieval.xml"
+
+simulation_duration: 180.0
+simulation_dt: 0.005
+
+# 200 Hz simulation / 4 = 50 Hz low-level.
+ll_control_decimation: 4
+# 50 Hz low-level / 5 = 10 Hz high-level.
+ll_steps_per_hl_step: 5
+
+# ---------------- Low-level policy interface ----------------
+ll_history_length: 5
+ll_obs_dim_per_step: 80
+ll_obs_dim: 400
+ll_action_dim: 22
+
+# ---------------- High-level policy interface ----------------
+hl_history_length: 3
+hl_obs_dim_per_step: 59
+hl_obs_dim: 177
+hl_action_dim: 9
+
+# ---------------- Robot reset / actuation ----------------
+root_pos: [0.0, 0.0, 0.6017]
+root_quat_wxyz: [1.0, 0.0, 0.0, 0.0]
+
+# Same joint order as the validated low-level sim2sim:
+# FL leg+wheel, FR leg+wheel, RL leg+wheel, RR leg+wheel, arm 1..6, gripper.
+default_joint_pos: [
+  0.1, 0.8, -1.5, 0.0,
+ -0.1, 0.8, -1.5, 0.0,
+  0.1, 1.0, -1.5, 0.0,
+ -0.1, 1.0, -1.5, 0.0,
+  0.0, 1.48, -1.0, -0.54, 0.0, 1.57, 0.0
+]
+
+kps: [
+  200.0, 200.0, 300.0, 0.0,
+  200.0, 200.0, 300.0, 0.0,
+  200.0, 200.0, 300.0, 0.0,
+  200.0, 200.0, 300.0, 0.0,
+  76.8, 89.6, 89.6, 76.8, 76.8, 76.8, 76.8
+]
+
+kds: [
+  8.0, 8.0, 12.0, 10.0,
+  8.0, 8.0, 12.0, 10.0,
+  8.0, 8.0, 12.0, 10.0,
+  8.0, 8.0, 12.0, 10.0,
+  4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0
+]
+
+leg_action_scale: 0.25
+arm_action_scale: [0.10, 0.10, 0.10, 0.10, 0.10, 0.10]
+wheel_action_scale: 4.0
+
+leg_torque_limits: [
+  200.0, 200.0, 320.0,
+  200.0, 200.0, 320.0,
+  200.0, 200.0, 320.0,
+  200.0, 200.0, 320.0
+]
+arm_torque_limits: [30.0, 60.0, 30.0, 30.0, 30.0, 30.0]
+gripper_torque_limit: 30.0
+wheel_velocity_limits: [50.0, 50.0, 50.0, 50.0]
+
+# ---------------- PLB / EE command ----------------
+ee_body: "gripperStator"
+ground_z: 0.0
+ee_kp_dx: 0.30
+ee_kp_dz: 0.30
+
+neutral_kp0: [0.55, 0.0, 1.12]
+neutral_ee_yaw: 0.0
+neutral_ee_pitch: -0.06
+fixed_ee_roll: 1.5707963267948966
+
+base_cmd_scale: [0.5, 0.5, 0.5]
+kp0_delta_scale: [0.15, 0.15, 0.15]
+kp0_x_range: [0.40, 0.90]
+kp0_y_range: [-0.30, 0.30]
+kp0_z_range: [0.0, 1.15]
+ee_yaw_delta_scale: 0.174532925199433   # 10 deg
+ee_pitch_delta_scale: 0.174532925199433 # 10 deg
+ee_yaw_range: [-1.0471975511965976, 1.0471975511965976] # +/-60 deg
+ee_pitch_range: [-1.2217304763960306, 0.0]               # -70..0 deg
+
+# ---------------- Gripper ----------------
+gripper_open_pos: -1.57
+gripper_close_pos: 0.0
+gripper_binary_threshold: 0.0
+
+# Deployment version of the training Stage-2 heuristic:
+# once the deployable grasp-confidence proxy is true, force the executed
+# gripper command to CLOSE.
+stage2_force_gripper_close_enabled: true
+
+# Grasp-confidence proxy, identical to the deployable training semantics.
+gripper_center_offset_local: [0.075, 0.0, 0.01]
+grasp_proxy_error_threshold: 0.10
+gripper_not_fully_closed_angle_threshold: -0.08726646259971647 # -5 deg
+gripper_angle_hold_threshold: 0.05235987755982989              # 3 deg
+grasp_proxy_enter_steps: 3
+grasp_proxy_exit_steps: 3
+
+# ---------------- Retrieval task reset distribution ----------------
+random_seed: 0
+episode_length_s: 15.0
+auto_reset: true
+
+# Cube: exact training sampling distribution in the initial PLB frame.
+cube_body: "retrieval_cube"
+cube_freejoint: "retrieval_cube_freejoint"
+cube_side: 0.050
+object_half_extent: 0.025
+object_spawn_z_epsilon: 0.001
+object_sampling_center_x: 0.8
+object_sampling_center_y: 0.0
+object_sampling_r_range: [0.0, 2.0]
+object_sampling_theta_max: 0.7853981633974483 # 45 deg
+
+# Retrieval target: uniform by AREA inside a 0.25 m disk around initial root XY.
+retrieval_target_radius: 0.25
+retrieval_target_z_w: 0.50
+
+# ---------------- Visualization / diagnostics ----------------
+vis_retrieval_target: true
+vis_retrieval_target_radius: 0.05
+vis_ee_target: true
+vis_ee_target_axis_len: 0.20
+vis_ee_target_axis_radius: 0.01
+vis_ee_target_sphere_size: 0.03
+print_interval_sim_steps: 200

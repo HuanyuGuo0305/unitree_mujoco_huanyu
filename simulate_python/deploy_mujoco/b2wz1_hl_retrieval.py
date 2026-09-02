@@ -9,7 +9,7 @@ High-level ONNX: 10 Hz
 
 The low-level observation/action ordering and 5-frame feature-major history follow
 the already-validated PLB low-level sim2sim implementation.  The high-level
-59-D actor observation, 3-frame feature-major history, 9-D action semantics,
+56-D actor observation (root linear velocity removed), 3-frame feature-major history, 9-D action semantics,
 cube reset distribution, retrieval-target reset distribution, and deployable
 grasp-confidence proxy are aligned with the Isaac Lab high-level training task.
 
@@ -182,8 +182,8 @@ def main():
     assert ll_obs_dim_per_step == 80
     assert ll_obs_dim == 400
     assert ll_action_dim == 22
-    assert hl_obs_dim_per_step == 59
-    assert hl_obs_dim == 177
+    assert hl_obs_dim_per_step == 56
+    assert hl_obs_dim == 168
     assert hl_action_dim == 9
 
     root_pos_reset = np.asarray(cfg["root_pos"], dtype=np.float32)
@@ -257,8 +257,33 @@ def main():
     object_half_extent = float(cfg["object_half_extent"])
     object_spawn_z_epsilon = float(cfg["object_spawn_z_epsilon"])
 
+    # Retrieval-target reset distribution.
+    # Legacy mode preserves the original fixed-Z / 0.25-m-disk behavior.
+    # Enlarged mode matches the new training distribution.
+    enlarged_retrieval_target_sampling_range = bool(
+        cfg.get("enlarged_retrieval_target_sampling_range", False)
+    )
+
     retrieval_target_radius = float(cfg["retrieval_target_radius"])
     retrieval_target_z_w = float(cfg["retrieval_target_z_w"])
+
+    enlarged_retrieval_target_radius = float(
+        cfg.get("enlarged_retrieval_target_radius", 0.50)
+    )
+    enlarged_retrieval_target_z_range_w = np.asarray(
+        cfg.get("enlarged_retrieval_target_z_range_w", [0.30, 0.80]),
+        dtype=np.float32,
+    )
+    if enlarged_retrieval_target_z_range_w.shape != (2,):
+        raise ValueError(
+            "enlarged_retrieval_target_z_range_w must contain exactly [z_min, z_max]."
+        )
+    if enlarged_retrieval_target_radius < 0.0:
+        raise ValueError("enlarged_retrieval_target_radius must be >= 0.")
+    if enlarged_retrieval_target_z_range_w[1] < enlarged_retrieval_target_z_range_w[0]:
+        raise ValueError(
+            "enlarged_retrieval_target_z_range_w must satisfy z_max >= z_min."
+        )
 
     episode_length_s = float(cfg["episode_length_s"])
     auto_reset = bool(cfg.get("auto_reset", True))
@@ -307,6 +332,19 @@ def main():
     print("Low ONNX:          ", low_sess.get_inputs()[0].shape, "->", low_sess.get_outputs()[0].shape)
     print("High ONNX:         ", high_sess.get_inputs()[0].shape, "->", high_sess.get_outputs()[0].shape)
     print(f"Force close proxy: {stage2_force_gripper_close_enabled}")
+    if enlarged_retrieval_target_sampling_range:
+        print(
+            "Retrieval target:  enlarged "
+            f"XY radius={enlarged_retrieval_target_radius:.3f} m, "
+            f"Z=[{float(enlarged_retrieval_target_z_range_w[0]):.3f}, "
+            f"{float(enlarged_retrieval_target_z_range_w[1]):.3f}] m"
+        )
+    else:
+        print(
+            "Retrieval target:  legacy "
+            f"XY radius={retrieval_target_radius:.3f} m, "
+            f"Z={retrieval_target_z_w:.3f} m"
+        )
     print(
         "Gripper DCMotor:    "
         f"effort={gripper_torque_limit:.3f} Nm, "
@@ -437,7 +475,14 @@ def main():
 
     # History buffers: one deque per feature group, matching training feature-major flatten.
     ll_feature_dims = [3, 3, 3, 9, 12, 6, 12, 6, 4, 22]
-    hl_feature_dims = [3, 3, 3, 12, 6, 1, 6, 3, 6, 3, 3, 9, 1]
+    # High-level actor observation matches training with root_lin_vel removed.
+    # Feature order per frame:
+    #   root_ang_vel_b(3), projected_gravity_b(3), leg_pos_rel(12),
+    #   arm_pos_rel(6), gripper_pos_rel(1), arm_joint_vel(6),
+    #   object_center_pos_base(3), gripper_orientation_base(6),
+    #   gripper_center_pos_base(3), retrieval_target_pos_base(3),
+    #   previous_hl_action(9), grasp_confidence_proxy(1) = 56.
+    hl_feature_dims = [3, 3, 12, 6, 1, 6, 3, 6, 3, 3, 9, 1]
     assert sum(ll_feature_dims) == ll_obs_dim_per_step
     assert sum(hl_feature_dims) == hl_obs_dim_per_step
 
@@ -674,11 +719,8 @@ def main():
     def build_hl_obs_frame():
         root_pos_w, root_quat_w = get_root_pose()
 
-        # MuJoCo free-joint translational qvel is converted to body frame.
-        root_lin_vel_w = d.qvel[0:3].copy().astype(np.float32)
-        root_lin_vel_b = quat_apply_inverse_wxyz(
-            root_quat_w, root_lin_vel_w
-        ).astype(np.float32)
+        # root_lin_vel is intentionally omitted from the high-level actor observation
+        # to match the retrained policy. All remaining observation terms/order are unchanged.
 
         # Same IMU gyro source used by the validated low-level sim2sim.
         root_ang_vel_b = get_sensor_slice(m, d, "imu_gyro").astype(np.float32)
@@ -721,7 +763,6 @@ def main():
 
         obs = np.concatenate(
             [
-                root_lin_vel_b,                              # 3
                 root_ang_vel_b,                              # 3
                 projected_gravity_b,                         # 3
                 leg_pos_rel,                                 # 12
@@ -813,14 +854,39 @@ def main():
         )
         d.qvel[cube_dof_adr:cube_dof_adr + 6] = 0.0
 
-        # Retrieval target: uniform by AREA in disk around initialized root world XY.
+        # Retrieval target: uniform by AREA in a disk around initialized root world XY.
+        #
+        # enlarged_retrieval_target_sampling_range == False:
+        #   preserve the original sim2sim logic exactly:
+        #     XY radius = retrieval_target_radius (legacy 0.25 m)
+        #     Z         = retrieval_target_z_w (legacy 0.50 m)
+        #
+        # enlarged_retrieval_target_sampling_range == True:
+        #   match the enlarged training distribution:
+        #     XY radius = enlarged_retrieval_target_radius (0.50 m)
+        #     Z         ~ Uniform(enlarged_retrieval_target_z_range_w)
         target_theta = float(rng.uniform(-math.pi, math.pi))
-        target_radius = retrieval_target_radius * math.sqrt(float(rng.uniform(0.0, 1.0)))
+
+        if enlarged_retrieval_target_sampling_range:
+            active_target_radius = enlarged_retrieval_target_radius
+            target_z_w = float(
+                rng.uniform(
+                    float(enlarged_retrieval_target_z_range_w[0]),
+                    float(enlarged_retrieval_target_z_range_w[1]),
+                )
+            )
+        else:
+            active_target_radius = retrieval_target_radius
+            target_z_w = retrieval_target_z_w
+
+        target_radius = active_target_radius * math.sqrt(
+            float(rng.uniform(0.0, 1.0))
+        )
         retrieval_target_pos_w = np.array(
             [
                 root_pos_w[0] + target_radius * math.cos(target_theta),
                 root_pos_w[1] + target_radius * math.sin(target_theta),
-                retrieval_target_z_w,
+                target_z_w,
             ],
             dtype=np.float32,
         )

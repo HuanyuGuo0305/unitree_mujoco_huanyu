@@ -6,9 +6,12 @@
 # The script intentionally does NOT implement startup blend-in or arm-target rate limiting.
 # The low-level observation/action ordering and feature-major history layout are kept aligned
 # with the already-validated PLB low-level MuJoCo sim2sim implementation.
+#
+# High-level actor difference from the previous version:
+# root linear velocity (3-D) is removed from each HL observation frame.
 
 low_policy_path: "exported_policy/b2wz1_object_retrieval/low_policy.onnx"
-high_policy_path: "exported_policy/b2wz1_object_retrieval/high_policy_2_mean.onnx"
+high_policy_path: "exported_policy/b2wz1_object_retrieval/high_policy.onnx"
 xml_path: "unitree_robots/b2wz1/b2wz1_retrieval.xml"
 
 simulation_duration: 180.0
@@ -26,9 +29,11 @@ ll_obs_dim: 400
 ll_action_dim: 22
 
 # ---------------- High-level policy interface ----------------
+# 56-D/frame = previous 59-D/frame minus root_lin_vel(3).
+# 3-frame feature-major history => 56 * 3 = 168.
 hl_history_length: 3
-hl_obs_dim_per_step: 59
-hl_obs_dim: 177
+hl_obs_dim_per_step: 56
+hl_obs_dim: 168
 hl_action_dim: 9
 
 # ---------------- Robot reset / actuation ----------------
@@ -130,9 +135,24 @@ object_sampling_center_y: 0.0
 object_sampling_r_range: [0.0, 2.0]
 object_sampling_theta_max: 0.7853981633974483 # 45 deg
 
-# Retrieval target: uniform by AREA inside a 0.25 m disk around initial root XY.
+# Retrieval target sampling switch.
+#
+# false -> preserve the existing/legacy sim2sim reset distribution:
+#   XY: uniform by AREA inside a 0.25 m disk around initial root XY.
+#   Z : fixed at 0.50 m.
+#
+# true -> use the enlarged/new training reset distribution:
+#   XY: uniform by AREA inside a 0.50 m disk around initial root XY.
+#   Z : independent Uniform(0.30, 0.80) m.
+enlarged_retrieval_target_sampling_range: true
+
+# Legacy retrieval target parameters, used only when the switch is false.
 retrieval_target_radius: 0.25
 retrieval_target_z_w: 0.50
+
+# Enlarged retrieval target parameters, used only when the switch is true.
+enlarged_retrieval_target_radius: 0.50
+enlarged_retrieval_target_z_range_w: [0.30, 0.80]
 
 # ---------------- Visualization / diagnostics ----------------
 vis_retrieval_target: true

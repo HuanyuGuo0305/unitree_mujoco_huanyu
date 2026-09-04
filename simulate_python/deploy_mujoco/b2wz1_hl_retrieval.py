@@ -199,6 +199,33 @@ def main():
 
     leg_torque_limits = np.asarray(cfg["leg_torque_limits"], dtype=np.float32)
     arm_torque_limits = np.asarray(cfg["arm_torque_limits"], dtype=np.float32)
+
+    # Arm actuator model switch.
+    #
+    # ideal_pd:
+    #   tau_requested = Kp * (q_des - q) - Kd * qdot
+    #   tau_applied   = clip(tau_requested, -effort_limit, +effort_limit)
+    #
+    # dc_motor:
+    #   the same PD feedback generates the requested torque, then a linear
+    #   four-quadrant DC-motor torque-speed envelope limits the applied torque,
+    #   matching the DCMotor-style limiter already used for jointGripper below.
+    arm_actuator_mode = str(cfg.get("arm_actuator_mode", "ideal_pd")).strip().lower()
+    if arm_actuator_mode not in ("ideal_pd", "dc_motor"):
+        raise ValueError(
+            "arm_actuator_mode must be either 'ideal_pd' or 'dc_motor', "
+            f"got {arm_actuator_mode!r}."
+        )
+
+    arm_saturation_efforts = np.asarray(
+        cfg.get("arm_saturation_efforts", arm_torque_limits),
+        dtype=np.float32,
+    )
+    arm_velocity_limits = np.asarray(
+        cfg.get("arm_velocity_limits", [math.pi] * 6),
+        dtype=np.float32,
+    )
+
     gripper_torque_limit = float(cfg["gripper_torque_limit"])
     # Match IsaacLab DCMotorCfg used by jointGripper.
     # In training:
@@ -310,7 +337,16 @@ def main():
     assert arm_action_scale.shape == (6,)
     assert leg_torque_limits.shape == (12,)
     assert arm_torque_limits.shape == (6,)
+    assert arm_saturation_efforts.shape == (6,)
+    assert arm_velocity_limits.shape == (6,)
     assert wheel_velocity_limits.shape == (4,)
+
+    if np.any(arm_torque_limits <= 0.0):
+        raise ValueError("arm_torque_limits must all be > 0.")
+    if np.any(arm_saturation_efforts <= 0.0):
+        raise ValueError("arm_saturation_efforts must all be > 0.")
+    if np.any(arm_velocity_limits <= 0.0):
+        raise ValueError("arm_velocity_limits must all be > 0.")
 
     # ONNX sessions.
     low_sess = ort.InferenceSession(low_policy_path, providers=["CPUExecutionProvider"])
@@ -332,6 +368,14 @@ def main():
     print("Low ONNX:          ", low_sess.get_inputs()[0].shape, "->", low_sess.get_outputs()[0].shape)
     print("High ONNX:         ", high_sess.get_inputs()[0].shape, "->", high_sess.get_outputs()[0].shape)
     print(f"Force close proxy: {stage2_force_gripper_close_enabled}")
+    print(f"Arm actuator mode: {arm_actuator_mode}")
+    if arm_actuator_mode == "dc_motor":
+        print(
+            "Arm DCMotor:       "
+            f"effort={np.array2string(arm_torque_limits, precision=2)}, "
+            f"stall={np.array2string(arm_saturation_efforts, precision=2)}, "
+            f"no-load vel={np.array2string(arm_velocity_limits, precision=3)} rad/s"
+        )
     if enlarged_retrieval_target_sampling_range:
         print(
             "Retrieval target:  enlarged "
@@ -1026,13 +1070,61 @@ def main():
             leg_tau, -leg_torque_limits, leg_torque_limits
         ).astype(np.float32)
 
-        arm_tau = (
+        # Arm joint feedback controller.  Both modes use the exact same PD
+        # requested torque; only the actuator saturation model differs.
+        arm_tau_computed = (
             kps[arm_mujoco_indices] * (arm_target - arm_pos)
             - kds[arm_mujoco_indices] * arm_vel
         )
-        arm_tau = np.clip(
-            arm_tau, -arm_torque_limits, arm_torque_limits
-        ).astype(np.float32)
+
+        if arm_actuator_mode == "ideal_pd":
+            # Legacy behavior: fixed symmetric effort clamp, independent of speed.
+            arm_tau = np.clip(
+                arm_tau_computed,
+                -arm_torque_limits,
+                arm_torque_limits,
+            ).astype(np.float32)
+        else:
+            # DCMotor-style four-quadrant torque-speed envelope.
+            #
+            # tau_top    = tau_stall * ( 1 - qdot / qdot_max )
+            # tau_bottom = tau_stall * (-1 - qdot / qdot_max )
+            # tau_max    = min(tau_top,    +effort_limit)
+            # tau_min    = max(tau_bottom, -effort_limit)
+            # tau_apply  = clip(tau_requested, tau_min, tau_max)
+            #
+            # As in IsaacLab DCMotor, first clip velocity to the point where the
+            # torque-speed line intersects the opposite continuous-effort limit.
+            arm_vel_at_effort_lim = arm_velocity_limits * (
+                1.0 + arm_torque_limits / arm_saturation_efforts
+            )
+            arm_vel_for_limit = np.clip(
+                arm_vel,
+                -arm_vel_at_effort_lim,
+                arm_vel_at_effort_lim,
+            )
+
+            arm_torque_speed_top = arm_saturation_efforts * (
+                1.0 - arm_vel_for_limit / arm_velocity_limits
+            )
+            arm_torque_speed_bottom = arm_saturation_efforts * (
+                -1.0 - arm_vel_for_limit / arm_velocity_limits
+            )
+
+            arm_max_effort = np.minimum(
+                arm_torque_speed_top,
+                arm_torque_limits,
+            )
+            arm_min_effort = np.maximum(
+                arm_torque_speed_bottom,
+                -arm_torque_limits,
+            )
+
+            arm_tau = np.clip(
+                arm_tau_computed,
+                arm_min_effort,
+                arm_max_effort,
+            ).astype(np.float32)
 
         # jointGripper actuator dynamics aligned with IsaacLab DCMotor.
         #

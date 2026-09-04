@@ -77,6 +77,25 @@ leg_torque_limits: [
   200.0, 200.0, 320.0
 ]
 arm_torque_limits: [30.0, 60.0, 30.0, 30.0, 30.0, 30.0]
+
+# Arm actuator model:
+#   ideal_pd -> legacy fixed torque clamp.
+#   dc_motor -> same Kp/Kd position feedback, followed by a speed-dependent
+#               four-quadrant DC-motor torque-speed envelope.
+arm_actuator_mode: "ideal_pd"  # "dc_motor"
+
+# DCMotor parameters for arm joints J1..J6.
+# arm_torque_limits above remain the continuous effort limits.
+# Start saturation/stall efforts equal to the existing effort limits so the only
+# new effect is the velocity-dependent torque envelope.
+arm_saturation_efforts: [30.0, 60.0, 30.0, 30.0, 30.0, 30.0]
+
+# Unitree Z1 publishes 180 deg/s max speed for J1..J6 = pi rad/s.
+arm_velocity_limits: [
+  3.141592653589793, 3.141592653589793, 3.141592653589793,
+  3.141592653589793, 3.141592653589793, 3.141592653589793
+]
+
 gripper_torque_limit: 30.0
 wheel_velocity_limits: [50.0, 50.0, 50.0, 50.0]
 

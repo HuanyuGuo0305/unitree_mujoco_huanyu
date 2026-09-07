@@ -1,0 +1,134 @@
+# WBC-UAN sim2sim configuration for B2W + Z1.
+#
+# IMPORTANT:
+# - policy_path must be the WBC policy trained with the frozen UAN actuator.
+# - uan_model_path must be the exported deterministic TorchScript wrapper for
+#   the selected UAN checkpoint (model_2100), including observation normalizer.
+# - The current WBC training uses ordinary JointPositionActionCfg for the arm:
+#   there is NO arm target-rate limiter here.  A 50 Hz q_des is held for five
+#   250 Hz physics/UAN steps.
+
+policy_path: "exported_policy/b2wz1_wbc_uan_plb/policy_wbc_uan_2.onnx"
+uan_model_path: "exported_policy/b2wz1_wbc_uan_plb/model_2100_inference.pt"
+xml_path: "unitree_robots/b2wz1/ground.xml"
+
+simulation_duration: 180.0
+
+# Must match WBC-UAN training:
+#   physics / UAN = 250 Hz
+#   WBC policy    =  50 Hz
+simulation_dt: 0.004
+control_decimation: 5
+
+startup_hold_s: 1.0
+startup_blend_s: 2.0
+
+history_length: 5
+obs_dim_per_step: 80
+obs_dim: 400
+action_dim: 22
+
+base_command: [0.3, 0.0, 0.0]
+
+root_pos: [0.0, 0.0, 0.6017]
+root_quat_wxyz: [1.0, 0.0, 0.0, 0.0]
+
+# MuJoCo qpos order used by the script:
+# FL leg+wheel, FR leg+wheel, RL leg+wheel, RR leg+wheel,
+# joint1..joint6, jointGripper.
+# Keep joint6=1.57 if that is the default used by the exported WBC policy.
+default_joint_pos: [
+   0.1, 0.8, -1.5, 0.0,
+  -0.1, 0.8, -1.5, 0.0,
+   0.1, 1.0, -1.5, 0.0,
+  -0.1, 1.0, -1.5, 0.0,
+   0.0, 1.48, -1.0, -0.54, 0.0, 1.57, 0.0
+]
+
+# Nominal MuJoCo PD gains for legs and gripper.  Arm entries are kept aligned
+# with the UAN nominal law for readability, but the six arm torques are NOT
+# computed from this table; they are computed by the UAN block below.
+kps: [
+  200.0, 200.0, 300.0,  0.0,
+  200.0, 200.0, 300.0,  0.0,
+  200.0, 200.0, 300.0,  0.0,
+  200.0, 200.0, 300.0,  0.0,
+   64.0, 115.2, 64.0, 64.0, 64.0, 64.0, 64.0
+]
+
+kds: [
+   8.0, 8.0, 12.0, 10.0,
+   8.0, 8.0, 12.0, 10.0,
+   8.0, 8.0, 12.0, 10.0,
+   8.0, 8.0, 12.0, 10.0,
+   3.0, 4.0, 3.0, 3.0, 3.0, 3.0, 3.0
+]
+
+leg_action_scale: 0.25
+arm_action_scale: [0.10, 0.10, 0.10, 0.10, 0.10, 0.10]
+wheel_action_scale: 4.0
+
+leg_torque_limits: [
+  200.0, 200.0, 320.0,
+  200.0, 200.0, 320.0,
+  200.0, 200.0, 320.0,
+  200.0, 200.0, 320.0
+]
+
+gripper_torque_limit: 30.0
+wheel_velocity_limits: [50.0, 50.0, 50.0, 50.0]
+
+# --------------------------------------------------------------------------
+# Frozen UAN actuator -- must match UNITREE_B2WZ1_UAN_CFG / UANActuatorCfg.
+# --------------------------------------------------------------------------
+uan_device: "cpu"
+uan_history_length: 25
+uan_pos_scale: 1.0
+uan_vel_scale: 0.05
+uan_action_scale: 0.20
+
+uan_kp: [64.0, 115.2, 64.0, 64.0, 64.0, 64.0]
+uan_kd: [3.0, 4.0, 3.0, 3.0, 3.0, 3.0]
+
+# Explicit PD is clipped here first.
+uan_nominal_torque_limits: [30.0, 60.0, 30.0, 30.0, 30.0, 30.0]
+
+# Then UAN residual is added and total torque is clipped here.
+uan_final_torque_limits: [45.0, 90.0, 45.0, 45.0, 45.0, 45.0]
+
+# Only used by periodic console diagnostics.
+uan_action_saturation_threshold: 0.95
+
+# ground.xml may still contain legacy Z1 arm actuator limits (e.g. +/-30 Nm).
+# The script already applies the exact UAN final clamp, so synchronize any
+# narrower MuJoCo ctrl/force/joint actuator-force ranges to the UAN final cap
+# to prevent a hidden second clamp.
+sync_mujoco_arm_limits_to_uan: true
+
+# --------------------------------------------------------------------------
+# EE command / PLB settings.
+# --------------------------------------------------------------------------
+ee_body: "gripperStator"
+ee_command_mode: "direct"
+ee_command_path: "utilities/data/keypoints_plb_pickup.npy"
+
+# PLB frame:
+#   origin = [base_x, base_y, ee_ground_z]
+#   orientation = yaw-only(base_quat)
+ee_ground_z: 0.0
+
+ee_kp_dx: 0.30
+ee_kp_dz: 0.30
+ee_command_seed: 0
+ee_cycle_duration_s: 8.0
+
+# Used only if ee_command_mode: "sequential".
+ee_sequential_traj_duration_s: 2.0
+ee_sequential_hold_duration_s: 1.0
+
+vis_ee_target: true
+vis_ee_target_axis_len: 0.20
+vis_ee_target_axis_radius: 0.01
+vis_ee_target_sphere_size: 0.03
+vis_ee_target_alpha: 0.9
+vis_ee_target_show_current: true

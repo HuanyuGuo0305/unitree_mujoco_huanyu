@@ -8,8 +8,8 @@
 #   there is NO arm target-rate limiter here.  A 50 Hz q_des is held for five
 #   250 Hz physics/UAN steps.
 
-policy_path: "exported_policy/b2wz1_wbc_uan_plb/policy_wbc_uan_2.onnx"
-uan_model_path: "exported_policy/b2wz1_wbc_uan_plb/model_2100_inference.pt"
+policy_path: "exported_policy/b2wz1_wbc_uan_plb/policy_wbc_uan_3.onnx"
+uan_model_path: "exported_policy/b2wz1_wbc_uan_plb/model_4000_inference.pt"
 xml_path: "unitree_robots/b2wz1/ground.xml"
 
 simulation_duration: 180.0
@@ -28,7 +28,7 @@ obs_dim_per_step: 80
 obs_dim: 400
 action_dim: 22
 
-base_command: [0.3, 0.0, 0.0]
+base_command: [0.0, 0.0, 0.0]
 
 root_pos: [0.0, 0.0, 0.6017]
 root_quat_wxyz: [1.0, 0.0, 0.0, 0.0]

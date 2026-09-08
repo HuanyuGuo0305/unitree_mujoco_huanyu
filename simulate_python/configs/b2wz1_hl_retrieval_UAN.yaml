@@ -14,14 +14,14 @@
 # training both the frozen WBC and the new high-level retrieval policy.
 
 # Frozen WBC trained with UAN.
-low_policy_path: "exported_policy/b2wz1_hl_retrieval_uan/policy_wbc_uan.onnx"
+low_policy_path: "exported_policy/b2wz1_hl_retrieval_uan/low_policy.onnx"
 
 # Newly trained high-level retrieval policy.
 # Adjust this path to your actual exported ONNX filename if different.
 high_policy_path: "exported_policy/b2wz1_hl_retrieval_uan/high_policy.onnx"
 
 # Frozen model_2100 deterministic TorchScript UAN, including actor normalizer.
-uan_model_path: "exported_policy/b2wz1_hl_retrieval_uan/model_2100_inference.pt"
+uan_model_path: "exported_policy/b2wz1_hl_retrieval_uan/model_4000_inference.pt"
 
 xml_path: "unitree_robots/b2wz1/b2wz1_retrieval.xml"
 

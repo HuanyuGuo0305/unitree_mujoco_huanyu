@@ -25,7 +25,7 @@ low_policy_path: "exported_policy/b2wz1_hl_retrieval_uan/low_policy.onnx"
 
 # Newly trained ABS high-level retrieval policy.
 # Adjust this path to your actual exported ONNX filename if different.
-high_policy_path: "exported_policy/b2wz1_hl_retrieval_abs_uan/high_policy.onnx"
+high_policy_path: "exported_policy/b2wz1_hl_retrieval_abs_uan/high_policy_2.onnx"
 
 # Frozen model_4000 deterministic TorchScript UAN, including actor normalizer.
 uan_model_path: "exported_policy/b2wz1_hl_retrieval_uan/model_4000_inference.pt"

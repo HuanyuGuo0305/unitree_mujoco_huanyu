@@ -8,10 +8,12 @@ Frozen low-level WBC ONNX: 50 Hz
 High-level retrieval ONNX: 10 Hz
 
 The high-level policy matches the ABS Isaac Lab training interface:
-56-D/frame actor observation, 3-frame feature-major history, and 9-D action.
-The only behavioral change relative to the previous UAN sim2sim is the 5-D
-high-level arm/EE action semantics: normalized actions map directly to absolute
-PLB XYZ/yaw/pitch command ranges rather than being deltas from measured EE pose.
+55-D/frame actor observation, 3-frame feature-major history, and 9-D action.
+The high-level arm/EE action semantics remain ABSOLUTE: normalized actions map
+directly to PLB XYZ/yaw/pitch command ranges rather than being deltas from
+measured EE pose.  Relative to the previous ABS sim2sim, the actor observation
+drops grasp_confidence_proxy: 55-D/frame x 3 feature-major = 165-D.
+The grasp proxy is still computed internally for unchanged task/execution logic.
 
 The low-level WBC outputs:
   - 12 leg position targets
@@ -208,8 +210,8 @@ def main():
     assert ll_obs_dim_per_step == 80
     assert ll_obs_dim == 400
     assert ll_action_dim == 22
-    assert hl_obs_dim_per_step == 56
-    assert hl_obs_dim == 168
+    assert hl_obs_dim_per_step == 55
+    assert hl_obs_dim == 165
     assert hl_action_dim == 9
 
     root_pos_reset = np.asarray(cfg["root_pos"], dtype=np.float32)
@@ -503,6 +505,8 @@ def main():
     print(f"UAN final cap:     {uan_final_torque_limits}")
     print(f"Force close proxy: {stage2_force_gripper_close_enabled}")
     print("HL arm semantics:  ABS normalized action -> PLB XYZ/yaw/pitch ranges")
+    print("HL actor obs:      55-D/frame x 3 = 165-D; grasp proxy NOT exposed")
+    print("Internal proxy:     retained for force-close/task logic")
     print(
         "EE pitch mapping:   policy pitch * "
         f"{ee_pitch_to_euler_sign:+.0f} -> geometric XYZ-Euler pitch "
@@ -722,14 +726,17 @@ def main():
 
     # History buffers: one deque per feature group, matching training feature-major flatten.
     ll_feature_dims = [3, 3, 3, 9, 12, 6, 12, 6, 4, 22]
-    # High-level actor observation matches training with root_lin_vel removed.
+    # High-level actor observation matches the no-proxy training interface.
     # Feature order per frame:
     #   root_ang_vel_b(3), projected_gravity_b(3), leg_pos_rel(12),
     #   arm_pos_rel(6), gripper_pos_rel(1), arm_joint_vel(6),
     #   object_center_pos_base(3), gripper_orientation_base(6),
     #   gripper_center_pos_base(3), retrieval_target_pos_base(3),
-    #   previous_hl_action(9), grasp_confidence_proxy(1) = 56.
-    hl_feature_dims = [3, 3, 12, 6, 1, 6, 3, 6, 3, 3, 9, 1]
+    #   previous_hl_action(9) = 55.
+    #
+    # grasp_confidence_proxy is intentionally NOT part of the actor observation.
+    # It is still maintained below for unchanged internal force-close/task logic.
+    hl_feature_dims = [3, 3, 12, 6, 1, 6, 3, 6, 3, 3, 9]
     assert sum(ll_feature_dims) == ll_obs_dim_per_step
     assert sum(hl_feature_dims) == hl_obs_dim_per_step
 
@@ -1058,8 +1065,9 @@ def main():
     def build_hl_obs_frame():
         root_pos_w, root_quat_w = get_root_pose()
 
-        # root_lin_vel is intentionally omitted from the high-level actor observation
-        # to match the retrained policy. All remaining observation terms/order are unchanged.
+        # root_lin_vel and grasp_confidence_proxy are intentionally omitted from the
+        # high-level actor observation to match the retrained no-proxy policy.
+        # All remaining observation terms/order are unchanged.
 
         # Same IMU gyro source used by the validated low-level sim2sim.
         root_ang_vel_b = get_sensor_slice(m, d, "imu_gyro").astype(np.float32)
@@ -1113,7 +1121,6 @@ def main():
                 gripper_center_pos_base,                     # 3
                 retrieval_target_pos_base,                   # 3
                 previous_hl_action,                          # 9
-                np.array([float(grasp_confidence_proxy)], dtype=np.float32), # 1
             ],
             dtype=np.float32,
         )

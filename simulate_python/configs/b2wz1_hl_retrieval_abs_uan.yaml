@@ -22,7 +22,7 @@ low_policy_path: "exported_policy/b2wz1_hl_retrieval_abs_uan/low_policy.onnx"
 
 # Newly trained ABS high-level retrieval policy WITHOUT actor grasp proxy.
 # Point this at the new exported ONNX; its input must be [1, 165].
-high_policy_path: "exported_policy/b2wz1_hl_retrieval_abs_uan/high_policy_4.onnx"
+high_policy_path: "exported_policy/b2wz1_hl_retrieval_abs_uan/high_policy_5.onnx"
 
 # Frozen model_4000 deterministic TorchScript UAN, including actor normalizer.
 uan_model_path: "exported_policy/b2wz1_hl_retrieval_uan/model_4000_inference.pt"
@@ -121,13 +121,31 @@ sync_mujoco_arm_limits_to_uan: true
 
 # ---------------- Gripper ----------------
 gripper_open_pos: -1.57
-gripper_close_pos: 0.0
+gripper_close_pos: -0.53
 gripper_binary_threshold: 0.0
 
-# jointGripper remains the original DCMotor-style actuator, not UAN.
+# jointGripper actuator model (never UAN):
+#   "dc_motor"    -> IsaacLab DCMotor.  Ideal-PD effort clipped by the linear
+#                    four-quadrant torque-speed envelope.  This is what the
+#                    policy was trained with.
+#   "pd_position" -> ideal PD position actuator.  tau = kp*(q_des-q) - kd*qdot,
+#                    clipped only to +/- gripper_pd_torque_limit, with no
+#                    torque-speed envelope and no velocity pre-clip.
+gripper_mode: "pd_position"
+
+# dc_motor parameters.
 gripper_torque_limit: 30.0
 gripper_saturation_effort: 30.0
 gripper_velocity_limit: 2.0
+
+# pd_position parameters, read only when gripper_mode == "pd_position".
+# gripper_pd_kp / gripper_pd_kd default to the jointGripper entries of the
+# kps/kds tables above; gripper_pd_torque_limit defaults to gripper_torque_limit.
+# Keep the effort limit within the MuJoCo motorGripper ctrlrange (+/-30 Nm in
+# b2wz1.xml) or MuJoCo clamps it; the script warns at startup if it does.
+gripper_pd_kp: 64.0
+gripper_pd_kd: 10.0
+gripper_pd_torque_limit: 30.0
 
 # Deployment version of the training Stage-2 heuristic.
 stage2_force_gripper_close_enabled: false

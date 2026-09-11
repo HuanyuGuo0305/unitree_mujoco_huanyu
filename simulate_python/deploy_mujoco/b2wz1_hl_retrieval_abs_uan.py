@@ -262,6 +262,28 @@ def main():
         cfg.get("gripper_saturation_effort", gripper_torque_limit)
     )
     gripper_velocity_limit = float(cfg.get("gripper_velocity_limit", 2.0))
+
+    # jointGripper actuator model.
+    #   "dc_motor"    -> IsaacLab DCMotor torque-speed envelope, as trained.
+    #   "pd_position" -> ideal PD position actuator, effort-clipped only.
+    gripper_mode = str(cfg.get("gripper_mode", "dc_motor")).strip().lower()
+    if gripper_mode not in ("dc_motor", "pd_position"):
+        raise ValueError(
+            "gripper_mode must be 'dc_motor' or 'pd_position', got "
+            f"{cfg.get('gripper_mode')!r}."
+        )
+
+    # pd_position parameters.  The gains default to the jointGripper entries of
+    # the kps/kds tables and are resolved once the MuJoCo joint order is known.
+    gripper_pd_kp_cfg = cfg.get("gripper_pd_kp", None)
+    gripper_pd_kd_cfg = cfg.get("gripper_pd_kd", None)
+    gripper_pd_torque_limit = float(
+        cfg.get("gripper_pd_torque_limit", gripper_torque_limit)
+    )
+    if gripper_mode == "pd_position" and gripper_pd_torque_limit <= 0.0:
+        raise ValueError(
+            f"gripper_pd_torque_limit must be > 0, got {gripper_pd_torque_limit}"
+        )
     wheel_velocity_limits = np.asarray(cfg["wheel_velocity_limits"], dtype=np.float32)
 
     base_cmd_scale = np.asarray(cfg["base_cmd_scale"], dtype=np.float32)
@@ -526,12 +548,19 @@ def main():
             f"XY radius={retrieval_target_radius:.3f} m, "
             f"Z={retrieval_target_z_w:.3f} m"
         )
-    print(
-        "Gripper DCMotor:    "
-        f"effort={gripper_torque_limit:.3f} Nm, "
-        f"stall={gripper_saturation_effort:.3f} Nm, "
-        f"no-load vel={gripper_velocity_limit:.3f} rad/s"
-    )
+    if gripper_mode == "pd_position":
+        print(
+            "Gripper actuator:   pd_position, "
+            f"effort=+/-{gripper_pd_torque_limit:.3f} Nm, "
+            "no torque-speed envelope"
+        )
+    else:
+        print(
+            "Gripper actuator:   dc_motor, "
+            f"effort={gripper_torque_limit:.3f} Nm, "
+            f"stall={gripper_saturation_effort:.3f} Nm, "
+            f"no-load vel={gripper_velocity_limit:.3f} rad/s"
+        )
     if debug_tracking_logging:
         print(
             "Tracking debug:     50-Hz CSV every "
@@ -635,6 +664,49 @@ def main():
     default_leg_pos = default_joint_pos[leg_mujoco_indices]
     default_arm_pos = default_joint_pos[arm_mujoco_indices]
     default_gripper_pos = float(default_joint_pos[gripper_mujoco_index])
+
+    # jointGripper PD gains.  Both modes evaluate the same ideal-PD law first,
+    # so the kps/kds table entries are the default for either; pd_position can
+    # override them without touching the DCMotor path.
+    gripper_pd_kp = (
+        float(gripper_pd_kp_cfg)
+        if gripper_pd_kp_cfg is not None
+        else float(kps[gripper_mujoco_index])
+    )
+    gripper_pd_kd = (
+        float(gripper_pd_kd_cfg)
+        if gripper_pd_kd_cfg is not None
+        else float(kds[gripper_mujoco_index])
+    )
+    if gripper_mode == "pd_position":
+        if gripper_pd_kp <= 0.0 or gripper_pd_kd < 0.0:
+            raise ValueError(
+                "Invalid jointGripper PD gains: "
+                f"kp={gripper_pd_kp}, kd={gripper_pd_kd}."
+            )
+        print(
+            f"Gripper pd_position: kp={gripper_pd_kp:.3f}, "
+            f"kd={gripper_pd_kd:.3f}, "
+            f"effort=+/-{gripper_pd_torque_limit:.3f} Nm"
+        )
+        # The PD law writes a torque into a MuJoCo <motor>, so a narrower
+        # ctrlrange in the XML silently caps the requested effort.
+        if "jointGripper" in ctrl_joint_names:
+            gripper_ctrl_i = ctrl_joint_names.index("jointGripper")
+            if hasattr(m, "actuator_ctrllimited") and bool(
+                m.actuator_ctrllimited[gripper_ctrl_i]
+            ):
+                gripper_ctrl_range = m.actuator_ctrlrange[gripper_ctrl_i]
+                if (
+                    gripper_ctrl_range[0] > -gripper_pd_torque_limit + 1e-6
+                    or gripper_ctrl_range[1] < gripper_pd_torque_limit - 1e-6
+                ):
+                    print(
+                        "  WARNING: MuJoCo jointGripper actuator ctrlrange "
+                        f"[{gripper_ctrl_range[0]:.1f}, "
+                        f"{gripper_ctrl_range[1]:.1f}] is narrower than "
+                        f"+/-{gripper_pd_torque_limit:.1f} Nm; MuJoCo clamps."
+                    )
 
     # The retrieval XML may still contain the legacy +/-30/60 Nm Z1 limits.
     # The explicit UAN law already owns the final torque clamp, so synchronize
@@ -1468,70 +1540,83 @@ def main():
             arm_vel,
         )
 
-        # jointGripper actuator dynamics aligned with IsaacLab DCMotor.
-        #
-        # IsaacLab first computes the IdealPD requested effort:
-        #   tau_computed = Kp * (q_des - q) - Kd * qdot
-        #
-        # It then clips that effort with the linear four-quadrant DC-motor
-        # torque-speed envelope:
-        #   tau_top    = tau_stall * ( 1 - qdot / qdot_max )
-        #   tau_bottom = tau_stall * (-1 - qdot / qdot_max )
-        #   tau_max    = min(tau_top,    +tau_cont)
-        #   tau_min    = max(tau_bottom, -tau_cont)
-        #   tau_applied = clip(tau_computed, tau_min, tau_max)
-        #
-        # Before evaluating the envelope, IsaacLab clips joint velocity to:
-        #   +/- velocity_limit * (1 + effort_limit / saturation_effort)
-        gripper_tau_computed = (
-            kps[gripper_mujoco_index] * (gripper_target - gripper_pos)
-            - kds[gripper_mujoco_index] * gripper_vel
-        )
-
-        if gripper_velocity_limit <= 0.0:
-            raise ValueError(
-                f"gripper_velocity_limit must be > 0, got {gripper_velocity_limit}"
+        if gripper_mode == "pd_position":
+            # Ideal PD position actuator: the requested effort is clipped
+            # only to the symmetric effort limit, with no DC-motor
+            # torque-speed envelope and no velocity pre-clip.
+            gripper_tau = float(
+                np.clip(
+                    gripper_pd_kp * (gripper_target - gripper_pos)
+                    - gripper_pd_kd * gripper_vel,
+                    -gripper_pd_torque_limit,
+                    gripper_pd_torque_limit,
+                )
             )
-        if gripper_saturation_effort <= 0.0:
-            raise ValueError(
-                "gripper_saturation_effort must be > 0, "
-                f"got {gripper_saturation_effort}"
+        else:
+            # jointGripper actuator dynamics aligned with IsaacLab DCMotor.
+            #
+            # IsaacLab first computes the IdealPD requested effort:
+            #   tau_computed = Kp * (q_des - q) - Kd * qdot
+            #
+            # It then clips that effort with the linear four-quadrant DC-motor
+            # torque-speed envelope:
+            #   tau_top    = tau_stall * ( 1 - qdot / qdot_max )
+            #   tau_bottom = tau_stall * (-1 - qdot / qdot_max )
+            #   tau_max    = min(tau_top,    +tau_cont)
+            #   tau_min    = max(tau_bottom, -tau_cont)
+            #   tau_applied = clip(tau_computed, tau_min, tau_max)
+            #
+            # Before evaluating the envelope, IsaacLab clips joint velocity to:
+            #   +/- velocity_limit * (1 + effort_limit / saturation_effort)
+            gripper_tau_computed = (
+                kps[gripper_mujoco_index] * (gripper_target - gripper_pos)
+                - kds[gripper_mujoco_index] * gripper_vel
             )
 
-        gripper_vel_at_effort_lim = gripper_velocity_limit * (
-            1.0 + gripper_torque_limit / gripper_saturation_effort
-        )
-        gripper_vel_for_limit = float(
-            np.clip(
-                gripper_vel,
-                -gripper_vel_at_effort_lim,
-                gripper_vel_at_effort_lim,
+            if gripper_velocity_limit <= 0.0:
+                raise ValueError(
+                    f"gripper_velocity_limit must be > 0, got {gripper_velocity_limit}"
+                )
+            if gripper_saturation_effort <= 0.0:
+                raise ValueError(
+                    "gripper_saturation_effort must be > 0, "
+                    f"got {gripper_saturation_effort}"
+                )
+
+            gripper_vel_at_effort_lim = gripper_velocity_limit * (
+                1.0 + gripper_torque_limit / gripper_saturation_effort
             )
-        )
-
-        gripper_torque_speed_top = gripper_saturation_effort * (
-            1.0 - gripper_vel_for_limit / gripper_velocity_limit
-        )
-        gripper_torque_speed_bottom = gripper_saturation_effort * (
-            -1.0 - gripper_vel_for_limit / gripper_velocity_limit
-        )
-
-        gripper_max_effort = min(
-            gripper_torque_speed_top,
-            gripper_torque_limit,
-        )
-        gripper_min_effort = max(
-            gripper_torque_speed_bottom,
-            -gripper_torque_limit,
-        )
-
-        gripper_tau = float(
-            np.clip(
-                gripper_tau_computed,
-                gripper_min_effort,
-                gripper_max_effort,
+            gripper_vel_for_limit = float(
+                np.clip(
+                    gripper_vel,
+                    -gripper_vel_at_effort_lim,
+                    gripper_vel_at_effort_lim,
+                )
             )
-        )
+
+            gripper_torque_speed_top = gripper_saturation_effort * (
+                1.0 - gripper_vel_for_limit / gripper_velocity_limit
+            )
+            gripper_torque_speed_bottom = gripper_saturation_effort * (
+                -1.0 - gripper_vel_for_limit / gripper_velocity_limit
+            )
+
+            gripper_max_effort = min(
+                gripper_torque_speed_top,
+                gripper_torque_limit,
+            )
+            gripper_min_effort = max(
+                gripper_torque_speed_bottom,
+                -gripper_torque_limit,
+            )
+
+            gripper_tau = float(
+                np.clip(
+                    gripper_tau_computed,
+                    gripper_min_effort,
+                    gripper_max_effort,
+                )
+            )
 
         wheel_ctrl = np.clip(
             wheel_cmd, -wheel_velocity_limits, wheel_velocity_limits

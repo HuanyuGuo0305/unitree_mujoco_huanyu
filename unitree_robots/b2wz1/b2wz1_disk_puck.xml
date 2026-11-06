@@ -1,0 +1,72 @@
+<mujoco model="b2wz1 dynamic transport scene">
+  <include file="b2wz1_disk.xml"/>
+
+  <statistic center="0 0 0.3" extent="2.5"/>
+
+  <!-- Keep the retrieval sim2sim visual setup unchanged. -->
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0"/>
+    <rgba haze="0.15 0.25 0.35 1"/>
+    <global azimuth="90" elevation="-20"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient"
+      rgb1="0.3 0.5 0.7" rgb2="0 0 0"
+      width="512" height="3072"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge"
+      rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3"
+      markrgb="0.8 0.8 0.8" width="300" height="300"/>
+    <material name="groundplane"
+      texture="groundplane"
+      texuniform="true"
+      texrepeat="5 5"
+      reflectance="0.2"/>
+    <material name="transport_puck_material" rgba="0.85 0.25 0.10 1.0"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
+
+    <!-- Keep the retrieval sim2sim ground unchanged. -->
+    <geom name="floor"
+      size="0 0 0.05"
+      type="plane"
+      material="groundplane"
+      condim="3"
+      friction="0.8 0.2 0.1"/>
+
+    <!--
+      Transport puck matching Isaac Lab nominal geometry:
+        radius = 0.050 m
+        height = 0.080 m (MuJoCo cylinder size uses HALF-height = 0.040 m)
+        nominal mass = 0.500 kg
+
+      Homogeneous solid-cylinder inertia at this mass/geometry:
+        Ixx = Iyy = m*(3*r^2 + h^2)/12 = 0.0005791666666667 kg*m^2
+        Izz         = m*r^2/2          = 0.0006250000000000 kg*m^2
+
+      This XML stores NOMINAL values. A separate sim2sim runtime script must:
+        - sample/assign puck mass in [0.50, 1.50] kg and scale inertia;
+        - randomize sliding friction in [0.30, 1.00] as desired;
+        - spawn puck with xy jitter +/-0.010 m and clearance 0.0005 m.
+
+      MuJoCo does not have a direct 'restitution=0.0' geom attribute.
+      solref='0.02 1' uses damping ratio 1 (no intended rebound), but is
+      not numerically identical to Isaac Lab/PhysX restitution=0.
+    -->
+    <body name="transport_puck" pos="0 0 2">
+      <freejoint name="transport_puck_freejoint"/>
+      <inertial pos="0 0 0"
+        mass="0.50"
+        diaginertia="0.0005791666666667 0.0005791666666667 0.0006250000000000"/>
+      <geom name="transport_puck_geom"
+        type="cylinder"
+        size="0.050 0.040"
+        condim="3"
+        friction="0.60 0.005 0.0001"
+        solref="0.02 1"
+        material="transport_puck_material"/>
+    </body>
+  </worldbody>
+</mujoco>

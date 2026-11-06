@@ -1,0 +1,136 @@
+# C4: VBC (CoRL 2024)-inspired legged-only 12D RL + 0D stateful arm DLS IK.
+# Full-policy deployment only; 6D IK targets are NOT PPO actions.
+# Export the trained C4 RSL-RL actor to ONNX WITH the learned actor observation
+# normalizer (actor_obs_normalization=True), and update policy_path below.
+# The policy filename here is a PLACEHOLDER, not a verified existing file.
+# All unitree_robots/, exported_policy/ and utilities/ paths resolve repo-root FIRST.
+policy_path: "exported_policy/b2wz1_vbc_plb_legged_uan/policy_3.onnx"
+uan_model_path: "exported_policy/b2wz1_wbc_plb_uan/model_4000_inference.pt"
+
+# Reuse the *verified* C2 19-DOF XML with C1 wheel STL meshes and checkerboard.
+# Do NOT use C1/C3 wheeled ground.xml or b2wz1.xml.
+xml_path: "unitree_robots/b2wz1/b2wz1_legged.xml"
+
+simulation_duration: 180.0
+simulation_dt: 0.004
+control_decimation: 5
+startup_hold_s: 1.0
+startup_blend_s: 2.0
+
+# 66D per frame x 5, TERM-MAJOR histories; 12D actor action.
+# Terms: ang_vel3, gravity3, base_cmd3, PLB_EE9, leg_pos12, arm_pos6,
+#        leg_vel12, arm_vel6, prev_leg_action12.
+history_length: 5
+obs_dim_per_step: 66
+obs_dim: 330
+action_dim: 12
+# C4 standstill evaluation (original setting). For C2/C3 0.5 m/s comparison,
+# set this to [0.5, 0.0, 0.0] across all experiments.
+base_command: [0.5, 0.0, 0.0]
+root_pos: [0.0, 0.0, 0.6017]
+root_quat_wxyz: [1.0, 0.0, 0.0, 0.0]
+
+# All arrays are indexed by config_joint_names (MJCF model order),
+# NOT by Isaac Lab's resolved leg action order. No wheel joints in C4.
+config_joint_names:
+  - FL_hip_joint
+  - FL_thigh_joint
+  - FL_calf_joint
+  - FR_hip_joint
+  - FR_thigh_joint
+  - FR_calf_joint
+  - RL_hip_joint
+  - RL_thigh_joint
+  - RL_calf_joint
+  - RR_hip_joint
+  - RR_thigh_joint
+  - RR_calf_joint
+  - joint1
+  - joint2
+  - joint3
+  - joint4
+  - joint5
+  - joint6
+  - jointGripper
+
+default_joint_pos:
+  [0.1, 0.8, -1.5,
+   -0.1, 0.8, -1.5,
+   0.1, 1.0, -1.5,
+   -0.1, 1.0, -1.5,
+   0.0, 1.48, -1.0, -0.54, 0.0, 1.57, 0.0]
+
+# Leg/gripper PD; arm output torques computed by frozen UAN below.
+kps:
+  [200.0, 200.0, 300.0,
+   200.0, 200.0, 300.0,
+   200.0, 200.0, 300.0,
+   200.0, 200.0, 300.0,
+   64.0, 115.2, 64.0, 64.0, 64.0, 64.0, 64.0]
+kds:
+  [8.0, 8.0, 12.0,
+   8.0, 8.0, 12.0,
+   8.0, 8.0, 12.0,
+   8.0, 8.0, 12.0,
+   3.0, 4.0, 3.0, 3.0, 3.0, 3.0, 3.0]
+
+# Resolved PPO action order: 4 hips, 4 thighs, 4 calves, same as C1-C3.
+# Calf torque limit=320 Nm, hip/thigh limit=200 Nm.
+leg_action_scale: 0.25
+leg_torque_limits: [200.0, 200.0, 200.0, 200.0, 200.0, 200.0, 200.0, 200.0, 320.0, 320.0, 320.0, 320.0]
+gripper_torque_limit: 30.0
+
+# Frozen Z1 UAN from C1 / UNITREE_B2WZ1_UAN_CFG, model_4000.
+uan_device: "cpu"
+uan_history_length: 25
+uan_pos_scale: 1.0
+uan_vel_scale: 0.05
+uan_action_scale: 0.20
+uan_kp: [64.0, 115.2, 64.0, 64.0, 64.0, 64.0]
+uan_kd: [3.0, 4.0, 3.0, 3.0, 3.0, 3.0]
+uan_nominal_torque_limits: [30.0, 60.0, 30.0, 30.0, 30.0, 30.0]
+uan_final_torque_limits: [45.0, 90.0, 45.0, 45.0, 45.0, 45.0]
+uan_action_saturation_threshold: 0.95
+sync_mujoco_arm_limits_to_uan: true
+
+# C4 CommandDrivenArmIKActionCfg (same stateful IK implementation as C3).
+# IMPORTANT: supplied C4 training cfg had reference_gain=0.10; user requests
+# 0.20 for now. Keep it configurable and match training for exact sim2sim.
+# These limits are from the previously supplied B2WZ1 training URDF,
+# not the C1 MJCF (which uses a different upper bound for joint2).
+arm_ik:
+  control_mode: "stateful"
+  damping: 0.05
+  position_gain: 1.0
+  orientation_gain: 1.0
+  max_joint_delta: 0.10
+  joint_limit_margin: 0.01
+  reference_gain: 0.20
+  max_reference_lead: 0.50
+  soft_joint_pos_limit_factor: 0.9
+  arm_hard_joint_limits:
+    - [-2.6179938779914944, 2.6179938779914944] # joint1
+    - [0.0, 2.8798]                         # joint2
+    - [-2.8797932657906435, 0.0]           # joint3
+    - [-1.5184364492350666, 1.5184364492350666] # joint4
+    - [-1.3439035240356338, 1.3439035240356338] # joint5
+    - [-2.792526803190927, 2.792526803190927]   # joint6
+
+# Same C1-C3 PLB 9D goal, gripperStator EE body.
+ee_body: "gripperStator"
+ee_command_mode: "direct"  # training-equivalent random sample-and-hold; or sequential eval
+ee_command_path: "utilities/data/keypoints_plb_evaluation_filtered.npy"
+ee_ground_z: 0.0
+ee_kp_dx: 0.30
+ee_kp_dz: 0.30
+ee_command_seed: 0
+ee_cycle_duration_s: 8.0
+ee_sequential_traj_duration_s: 2.0
+ee_sequential_hold_duration_s: 1.0
+
+vis_ee_target: true
+vis_ee_target_axis_len: 0.20
+vis_ee_target_axis_radius: 0.01
+vis_ee_target_sphere_size: 0.03
+vis_ee_target_alpha: 0.9
+vis_ee_target_show_current: true

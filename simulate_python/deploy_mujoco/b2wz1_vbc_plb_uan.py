@@ -1,0 +1,1006 @@
+"""C3 / VBC-inspired B2W+Z1 Sim2Sim: 16D PPO locomotion + 0D stateful arm IK.
+
+Original research baseline inspired by VBC (CoRL 2024); the specific DLS IK
+and frozen-UAN implementation follow the user-provided Isaac Lab ActionTerm.
+
+Policy (50 Hz): 5-frame, TERM-MAJOR, 74D/frame = 370D input; 16D output:
+  12 leg position offsets + 4 wheel velocity commands.
+The arm IK contributes ZERO PPO action dimensions, but all six arm positions
+and velocities are still included in policy observations.
+
+Arm DLS (50 Hz): measured gripperStator body pose, world-frame Jacobian,
+  damped least-squares, max-norm joint step cap, persistent reference lead.
+Arm torque (250 Hz): frozen TorchScript UAN reproduces C1 explicit actuator.
+
+Only one deployment mode: full policy (no --mode switch).
+Usage from simulate_python/:
+  python3 deploy_mujoco/b2wz1_vbc_plb_uan.py configs/b2wz1_vbc_plb_uan.yaml
+  python3 deploy_mujoco/b2wz1_vbc_plb_uan.py configs/b2wz1_vbc_plb_uan.yaml --headless
+
+Uses existing C1 ground.xml which includes wheeled b2wz1.xml. No new XML.
+"""
+
+from __future__ import annotations
+
+import argparse
+from contextlib import nullcontext
+from collections import deque
+from pathlib import Path
+import hashlib
+import sys
+import time
+
+import mujoco
+import mujoco.viewer
+import numpy as np
+import onnxruntime as ort
+import torch
+import yaml
+
+# Repository layout:
+#   unitree_mujoco/exported_policy/...
+#   unitree_mujoco/utilities/...
+#   unitree_mujoco/simulate_python/deploy_mujoco/this_script.py
+#   unitree_mujoco/unitree_robots/...  (the canonical, working C1/C2 location)
+#   unitree_mujoco/simulate_python/unitree_robots/...  (legacy fallback only)
+# Always prefer repository-root assets to avoid silently loading stale XMLs.
+project_root = Path(__file__).resolve().parent.parent
+repository_root = project_root.parent
+for import_root in (repository_root, project_root):
+    if str(import_root) not in sys.path:
+        sys.path.insert(0, str(import_root))
+
+from utilities.math import (
+    quat_apply_inverse_wxyz,
+    quat_apply_wxyz,
+    quat_conjugate_wxyz,
+    quat_from_rotmat_wxyz,
+    quat_mul_wxyz,
+    quat_normalize_wxyz,
+    quat_rotate_inverse_numpy,
+    quat_unique_wxyz,
+    euler_xyz_from_quat_wxyz,
+    quat_from_yaw_wxyz,
+)
+from utilities.mujoco_helper import get_sensor_slice, make_arrow_mat
+
+
+class SequentialKeypointsTrajectoryCommandPLBSim:
+    """
+    Sequential trajectory sampler in PLB frame:
+      - follow rows in npy sequentially
+      - cubic interpolation between consecutive rows
+      - optional hold at each waypoint
+      - loop forever
+    """
+
+    def __init__(
+        self,
+        file_path: str,
+        control_dt: float,
+        traj_duration_s: float = 2.0,
+        hold_duration_s: float = 1.0,
+    ):
+        arr = np.load(file_path).astype(np.float32)
+        if arr.ndim != 2 or arr.shape[1] != 9:
+            raise ValueError(f"Expected npy shape (N,9), got {arr.shape} from '{file_path}'.")
+
+        self.table = arr
+        self.N = arr.shape[0]
+
+        self.control_dt = float(control_dt)
+        self.traj_duration_s = float(traj_duration_s)
+        self.hold_duration_s = float(hold_duration_s)
+
+        self.steps_per_traj = max(1, int(round(self.traj_duration_s / self.control_dt)))
+        self.steps_per_hold = max(0, int(round(self.hold_duration_s / self.control_dt)))
+
+        self.idx = 0
+        self.step = 0
+        self.phase = "move"
+        self._has_cmd = False
+
+        self.current = self.table[0].copy()
+        self.start = self.table[0].copy()
+        self.target = self.table[0].copy()
+
+    @property
+    def command(self) -> np.ndarray:
+        return self.current.copy()
+
+    @staticmethod
+    def cubic(t: float) -> float:
+        t = float(np.clip(t, 0.0, 1.0))
+        return 3.0 * t * t - 2.0 * t * t * t
+
+    def reset(self, initial_kps_plb: np.ndarray, sample_first: bool = True):
+        initial_kps_plb = np.asarray(initial_kps_plb, dtype=np.float32).reshape(9,)
+
+        self.idx = 0
+        self.step = 0
+        self.phase = "move"
+        self._has_cmd = True
+
+        self.current = initial_kps_plb.copy()
+        self.start = initial_kps_plb.copy()
+        self.target = self.table[0].copy() if sample_first else initial_kps_plb.copy()
+
+    def update(self) -> np.ndarray:
+        if not self._has_cmd:
+            raise RuntimeError("Command sampler not initialized. Call reset() first.")
+
+        if self.phase == "move":
+            tau = self.step / max(1, self.steps_per_traj)
+            s = self.cubic(tau)
+
+            self.current = ((1.0 - s) * self.start + s * self.target).astype(np.float32)
+
+            self.step += 1
+            if self.step >= self.steps_per_traj:
+                self.current = self.target.copy()
+                self.phase = "hold"
+                self.step = 0
+
+        elif self.phase == "hold":
+            self.current = self.target.copy()
+            self.step += 1
+
+            if self.step >= self.steps_per_hold:
+                self.phase = "move"
+                self.step = 0
+                self.idx = (self.idx + 1) % self.N
+                self.start = self.target.copy()
+                self.target = self.table[self.idx].copy()
+
+        return self.current.copy()
+
+
+class PresampledKeypointsDirectCommandPLBSim:
+    """
+    Directly sampled EE keypoint command in PLB frame.
+
+    PLB frame:
+      - origin = [base_x, base_y, ground_z]
+      - orientation = yaw-only(base_quat)
+
+    Behavior:
+      1) Randomly sample one row from a presampled reachable PLB keypoint table
+      2) Hold this sampled keypoint command until next resampling
+      3) No cubic interpolation
+      4) No adjacent-target threshold clipping
+    """
+
+    def __init__(
+        self,
+        file_path: str,
+        control_dt: float,
+        cycle_duration_s: float = 8.0,
+        seed: int = 0,
+    ):
+        arr = np.load(file_path).astype(np.float32)
+        if arr.ndim != 2 or arr.shape[1] != 9:
+            raise ValueError(f"Expected npy shape (N,9), got {arr.shape} from '{file_path}'.")
+
+        self._table = arr
+        self._num_rows = int(arr.shape[0])
+        self._control_dt = float(control_dt)
+        self._cycle_duration_s = float(cycle_duration_s)
+        if self._cycle_duration_s <= 0.0:
+            raise ValueError(f"Invalid cycle_duration_s={self._cycle_duration_s}")
+
+        self._cycle_steps = max(1, int(round(self._cycle_duration_s / self._control_dt)))
+        self._rng = np.random.default_rng(seed)
+
+        self._has_cmd = False
+        self._step_in_cycle = 0
+        self.keypoints_command_plb = np.zeros(9, dtype=np.float32)
+
+    @property
+    def command(self) -> np.ndarray:
+        return self.keypoints_command_plb.copy()
+
+    def _pick_index(self) -> int:
+        return int(self._rng.integers(0, self._num_rows))
+
+    def _sample_new_command(self):
+        self.keypoints_command_plb = self._table[self._pick_index()].copy().astype(np.float32)
+        self._step_in_cycle = 0
+        self._has_cmd = True
+
+    def reset(self, initial_kps_plb: np.ndarray, sample_first: bool = True):
+        initial_kps_plb = np.asarray(initial_kps_plb, dtype=np.float32).reshape(9,)
+        self._step_in_cycle = 0
+        self._has_cmd = True
+
+        if sample_first:
+            self._sample_new_command()
+        else:
+            self.keypoints_command_plb = initial_kps_plb.copy()
+
+    def update(self) -> np.ndarray:
+        if not self._has_cmd:
+            raise RuntimeError("Command sampler not initialized. Call reset() first.")
+
+        self._step_in_cycle += 1
+        if self._step_in_cycle >= self._cycle_steps:
+            self._sample_new_command()
+
+        return self.command
+
+
+
+
+
+def _normalize(vector: np.ndarray, label: str) -> np.ndarray:
+    norm = np.linalg.norm(vector)
+    if norm <= 1e-8 or not np.isfinite(norm):
+        raise ValueError(f"Degenerate PLB keypoints: {label} has norm {norm}")
+    return vector / norm
+
+
+def _rotation_from_keypoints(kps: np.ndarray) -> np.ndarray:
+    """Restore right-handed EE orientation from X and Z keypoint axes.
+
+    This mirrors the intended geometry of _quat_from_keypoints_lb: X from
+    kp1-kp0; Y from cross(Z,X); Z from cross(X,Y). It is deliberately
+    orthonormalized to withstand keypoint rounding.
+    """
+    kp = np.asarray(kps, dtype=np.float64).reshape(3, 3)
+    x = _normalize(kp[1] - kp[0], 'x-axis')
+    z_raw = _normalize(kp[2] - kp[0], 'z-axis')
+    y = _normalize(np.cross(z_raw, x), 'cross(z,x)')
+    z = _normalize(np.cross(x, y), 'orthogonalized z-axis')
+    return np.column_stack((x, y, z))
+
+
+def _rotation_error_axis_angle(R_current: np.ndarray, R_target: np.ndarray) -> np.ndarray:
+    """World-axis rotation vector taking the measured EE orientation to target.
+
+    Equivalent quaternion order: q_error = q_target * conj(q_current).
+    """
+    q_current = quat_from_rotmat_wxyz(np.asarray(R_current, dtype=np.float32))
+    q_target = quat_from_rotmat_wxyz(np.asarray(R_target, dtype=np.float32))
+    q_err = quat_normalize_wxyz(quat_mul_wxyz(q_target, quat_conjugate_wxyz(q_current)))
+    q_err = np.asarray(q_err, dtype=np.float64)
+    if q_err[0] < 0.0:
+        q_err = -q_err
+    imag = q_err[1:4]
+    magnitude = np.linalg.norm(imag)
+    if magnitude < 1e-9:
+        return (2.0 * imag).astype(np.float64)
+    angle = 2.0 * np.arctan2(magnitude, max(0.0, float(q_err[0])))
+    return (angle / magnitude) * imag
+
+
+def _check_shape(name: str, array, expected: tuple[int, ...]):
+    if np.asarray(array).shape != expected:
+        raise ValueError(f"{name}: expected {expected}, got {np.asarray(array).shape}")
+
+
+def _resolve_path(config: dict, key: str, *, yaml_path: Path) -> Path:
+    """Resolve C1/C2 repository assets deterministically and audit duplicates.
+
+    Canonical assets live in unitree_mujoco/{unitree_robots,utilities,
+    exported_policy}. A same-named file inside simulate_python is never
+    silently preferred. Absolute paths always select the exact supplied file.
+    """
+    path = Path(config[key]).expanduser()
+    if path.is_absolute():
+        candidates = [path]
+    else:
+        candidates = [repository_root / path, project_root / path, yaml_path.parent / path]
+    candidates = list(dict.fromkeys(candidate.resolve() for candidate in candidates))
+    matches = [candidate for candidate in candidates if candidate.is_file()]
+    if not matches:
+        searched = "\n  ".join(map(str, candidates))
+        raise FileNotFoundError(f"{key} not found. Searched:\n  {searched}")
+    selected = matches[0]
+    digest = hashlib.sha256(selected.read_bytes()).hexdigest()
+    print(f"[ASSET AUDIT] {key}: selected={selected}; sha256={digest[:16]}", flush=True)
+    if len(matches) > 1:
+        for other in matches[1:]:
+            other_digest = hashlib.sha256(other.read_bytes()).hexdigest()
+            if other_digest != digest:
+                print(f"[ASSET WARNING] Unused different copy: {other} "
+                      f"(sha256={other_digest[:16]}); selected={selected}", flush=True)
+    return selected
+
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="C3 VBC-inspired MuJoCo Sim2Sim (full policy only)")
+    parser.add_argument("yaml_path", type=str)
+    parser.add_argument("--headless", action="store_true", help="Run full policy without GUI")
+    args = parser.parse_args()
+
+    yaml_path = Path(args.yaml_path).expanduser().resolve()
+    with yaml_path.open("r", encoding="utf-8") as file:
+        cfg = yaml.safe_load(file)
+    policy_path = _resolve_path(cfg, "policy_path", yaml_path=yaml_path)
+    uan_model_path = _resolve_path(cfg, "uan_model_path", yaml_path=yaml_path)
+    xml_path = _resolve_path(cfg, "xml_path", yaml_path=yaml_path)
+    ee_command_path = _resolve_path(cfg, "ee_command_path", yaml_path=yaml_path)
+
+    simulation_dt = float(cfg["simulation_dt"])
+    control_decimation = int(cfg["control_decimation"])
+    control_dt = simulation_dt * control_decimation
+    history_length = int(cfg["history_length"])
+    obs_dim_per_step = int(cfg["obs_dim_per_step"])
+    obs_dim = int(cfg["obs_dim"])
+    action_dim = int(cfg["action_dim"])
+    simulation_duration = float(cfg["simulation_duration"])
+    startup_hold_s = float(cfg.get("startup_hold_s", 1.0))
+    startup_blend_s = float(cfg.get("startup_blend_s", 2.0))
+
+    if abs(simulation_dt - 0.004) > 1e-10 or control_decimation != 5:
+        raise ValueError("C3 requires 0.004 s physics / 5x decimation (50 Hz policy + IK).")
+    if (history_length, obs_dim_per_step, obs_dim, action_dim) != (5, 74, 370, 16):
+        raise ValueError("Expected C3 dimensions: history=5, frame=74, obs=370, action=16.")
+    if startup_blend_s < 0 or startup_hold_s < 0:
+        raise ValueError("Startup durations cannot be negative")
+
+    base_command = np.asarray(cfg["base_command"], dtype=np.float32)
+    root_pos = np.asarray(cfg["root_pos"], dtype=np.float64)
+    root_quat = np.asarray(cfg["root_quat_wxyz"], dtype=np.float64)
+    _check_shape('base_command', base_command, (3,))
+    _check_shape('root_pos', root_pos, (3,))
+    _check_shape('root_quat', root_quat, (4,))
+
+    cfg_joint_names = list(cfg["config_joint_names"])
+    default_joint_pos = np.asarray(cfg["default_joint_pos"], dtype=np.float64)
+    kps = np.asarray(cfg["kps"], dtype=np.float64)
+    kds = np.asarray(cfg["kds"], dtype=np.float64)
+    if len(cfg_joint_names) != 23 or len(set(cfg_joint_names)) != 23:
+        raise ValueError("config_joint_names must have 23 unique names")
+    for field, array in (("default_joint_pos",default_joint_pos), ("kps",kps), ("kds",kds)):
+        _check_shape(field,array,(23,))
+    defaults = dict(zip(cfg_joint_names, default_joint_pos))
+    gains_kp = dict(zip(cfg_joint_names, kps))
+    gains_kd = dict(zip(cfg_joint_names, kds))
+
+    # In Isaac Lab, the actual resolved action order is based on articulation
+    # joint indices, not on the declaration order in EnvironmentCfg.
+    leg_joint_names = [
+        "FL_hip_joint", "FR_hip_joint", "RL_hip_joint", "RR_hip_joint",
+        "FL_thigh_joint", "FR_thigh_joint", "RL_thigh_joint", "RR_thigh_joint",
+        "FL_calf_joint", "FR_calf_joint", "RL_calf_joint", "RR_calf_joint",
+    ]
+    arm_joint_names = [f"joint{i}" for i in range(1, 7)]
+    wheel_joint_names = [f"{side}_wheel_joint" for side in ("FL","FR","RL","RR")]
+    gripper_joint_name = "jointGripper"
+    all_names = leg_joint_names + arm_joint_names + wheel_joint_names + [gripper_joint_name]
+    if set(all_names) != set(cfg_joint_names):
+        raise ValueError("YAML joint mapping differs from required C3 MJCF joint names")
+
+    leg_action_scale = float(cfg["leg_action_scale"])
+    wheel_action_scale = float(cfg["wheel_action_scale"])
+    leg_torque_limits = np.asarray(cfg["leg_torque_limits"], dtype=np.float64)
+    wheel_velocity_limits = np.asarray(cfg["wheel_velocity_limits"], dtype=np.float64)
+    gripper_torque_limit = float(cfg["gripper_torque_limit"])
+    _check_shape('leg_torque_limits', leg_torque_limits, (12,))
+    _check_shape('wheel_velocity_limits', wheel_velocity_limits, (4,))
+
+    uan_device = str(cfg.get("uan_device", "cpu"))
+    uan_history_length = int(cfg.get("uan_history_length",25))
+    uan_pos_scale = float(cfg.get("uan_pos_scale",1.0))
+    uan_vel_scale = float(cfg.get("uan_vel_scale",0.05))
+    uan_action_scale = float(cfg.get("uan_action_scale",0.20))
+    uan_kp = np.asarray(cfg["uan_kp"], dtype=np.float32)
+    uan_kd = np.asarray(cfg["uan_kd"], dtype=np.float32)
+    uan_nominal_torque_limits = np.asarray(cfg["uan_nominal_torque_limits"], dtype=np.float32)
+    uan_final_torque_limits = np.asarray(cfg["uan_final_torque_limits"], dtype=np.float32)
+    uan_action_saturation_threshold = float(cfg.get("uan_action_saturation_threshold",0.95))
+    sync_mujoco_arm_limits_to_uan = bool(cfg.get("sync_mujoco_arm_limits_to_uan",True))
+    for field, array in (("uan_kp",uan_kp),("uan_kd",uan_kd),
+                         ("uan_nominal_torque_limits",uan_nominal_torque_limits),
+                         ("uan_final_torque_limits",uan_final_torque_limits)):
+        _check_shape(field,array,(6,))
+    if uan_history_length != 25 or np.any(uan_final_torque_limits < uan_nominal_torque_limits):
+        raise ValueError("UAN configuration differs from frozen C1 actuator")
+
+    # C3 arm_ik_action.py, EnvironmentCfg values override class defaults.
+    ik_cfg = cfg["arm_ik"]
+    if ik_cfg["control_mode"] != "stateful":
+        raise ValueError("C3 deployment supports only trained 'stateful' IK mode")
+    ik_damping = float(ik_cfg["damping"])
+    ik_pos_gain = float(ik_cfg["position_gain"])
+    ik_ori_gain = float(ik_cfg["orientation_gain"])
+    ik_max_delta = float(ik_cfg["max_joint_delta"])
+    ik_margin = float(ik_cfg["joint_limit_margin"])
+    ik_reference_gain = float(ik_cfg["reference_gain"])
+    ik_max_lead = float(ik_cfg["max_reference_lead"])
+    if min(ik_damping,ik_max_delta,ik_reference_gain,ik_max_lead) <= 0:
+        raise ValueError("Invalid stateful IK gains")
+    arm_hard_limits = np.asarray(ik_cfg["arm_hard_joint_limits"], dtype=np.float64)
+    _check_shape('arm_ik.arm_hard_joint_limits',arm_hard_limits,(6,2))
+    soft_factor = float(ik_cfg["soft_joint_pos_limit_factor"])
+    if not (0.0 < soft_factor <= 1.0):
+        raise ValueError("Invalid soft joint limit factor")
+    arm_soft_mid = arm_hard_limits.mean(axis=1)
+    arm_soft_half = (arm_hard_limits[:,1] - arm_hard_limits[:,0]) * (soft_factor / 2)
+    ik_lower = arm_soft_mid - arm_soft_half + ik_margin
+    ik_upper = arm_soft_mid + arm_soft_half - ik_margin
+    if np.any(ik_lower >= ik_upper):
+        raise ValueError("Arm soft limits invalid")
+
+    ee_body_name = str(cfg.get('ee_body','gripperStator'))
+    ee_kp_dx = float(cfg.get('ee_kp_dx',0.30))
+    ee_kp_dz = float(cfg.get('ee_kp_dz',0.30))
+    ee_ground_z = float(cfg.get('ee_ground_z',0.0))
+    ee_command_seed = int(cfg.get('ee_command_seed',0))
+    ee_cycle_duration_s = float(cfg.get('ee_cycle_duration_s',8.0))
+    ee_command_mode = str(cfg.get('ee_command_mode','direct'))
+    vis_ee_target = bool(cfg.get('vis_ee_target',True))
+    vis_ee_target_axis_len = float(cfg.get('vis_ee_target_axis_len',0.2))
+    vis_ee_target_axis_radius = float(cfg.get('vis_ee_target_axis_radius',0.01))
+    vis_ee_target_sphere_size = float(cfg.get('vis_ee_target_sphere_size',0.03))
+    vis_ee_target_alpha = float(cfg.get('vis_ee_target_alpha',0.9))
+    vis_ee_target_show_current = bool(cfg.get('vis_ee_target_show_current',True))
+
+    print('='*78)
+    print('C3 VBC-inspired PLB Sim2Sim | FULL POLICY ONLY')
+    print(f'Policy: {policy_path} | input=370, output=16')
+    print(f'UAN: {uan_model_path} | history={uan_history_length}, physics=250 Hz')
+    print(f'XML: {xml_path} | IK=stateful, reference_gain={ik_reference_gain:.2f}')
+    print(f'EE command: {ee_command_mode} | {ee_command_path}')
+    print('='*78)
+
+    sess = ort.InferenceSession(str(policy_path),providers=['CPUExecutionProvider'])
+    if len(sess.get_inputs()) != 1 or len(sess.get_outputs()) != 1:
+        raise ValueError('Expected a single-input/single-output C3 actor ONNX')
+    policy_input = sess.get_inputs()[0]
+    policy_output = sess.get_outputs()[0]
+    for side, tensor, expected in [('input',policy_input,370),('output',policy_output,16)]:
+        shape = tensor.shape
+        if len(shape) != 2 or (isinstance(shape[-1],int) and shape[-1] != expected):
+            raise ValueError(f'ONNX {side} shape {shape} not compatible with {expected}')
+    input_name, output_name = policy_input.name, policy_output.name
+    print('ONNX input/output:', policy_input.shape, policy_output.shape)
+    print('IMPORTANT: export the actor with its trained observation normalizer.')
+
+    if uan_device.startswith('cuda') and not torch.cuda.is_available():
+        raise RuntimeError('CUDA requested for UAN but unavailable')
+    uan = torch.jit.load(str(uan_model_path),map_location=uan_device).eval()
+    for parameter in uan.parameters():
+        parameter.requires_grad_(False)
+    with torch.inference_mode():
+        dummy_output = uan(torch.zeros((1,6*uan_history_length*2),device=uan_device))
+        if isinstance(dummy_output,(tuple,list)):
+            dummy_output = dummy_output[0]
+        if tuple(dummy_output.shape) != (1,6):
+            raise ValueError(f'UAN output shape {dummy_output.shape} != (1,6)')
+
+    m = mujoco.MjModel.from_xml_path(str(xml_path))
+    m.opt.timestep = simulation_dt
+    d = mujoco.MjData(m)
+    if m.nq != 30 or m.nv != 29 or m.nu != 23:
+        raise RuntimeError(f'C3 requires wheeled 23-joint model, got nq={m.nq}, nv={m.nv}, nu={m.nu}')
+
+    # C2 failure mode: 26/25/19 alone did not detect an old, wrong-mesh
+    # fixed-wheel XML. Validate the actual compiled scene and wheel assets.
+    ground_planes = [
+        gid for gid in range(m.ngeom)
+        if int(m.geom_type[gid]) == int(mujoco.mjtGeom.mjGEOM_PLANE)
+        and int(m.geom_bodyid[gid]) == 0
+    ]
+    if len(ground_planes) != 1:
+        raise RuntimeError(f"Expected one ground plane in {xml_path}; found {len(ground_planes)}")
+    floor_gid = ground_planes[0]
+    floor_name = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_GEOM, floor_gid)
+    floor_fr = m.geom_friction[floor_gid].copy()
+    floor_mat = int(m.geom_matid[floor_gid])
+    print(f"[SCENE AUDIT] floor={floor_name!r}, material_id={floor_mat}, "
+          f"friction={floor_fr.tolist()}, group={int(m.geom_group[floor_gid])}", flush=True)
+    if floor_mat < 0 or not np.allclose(floor_fr, [0.8, 0.2, 0.1], atol=1e-5):
+        raise RuntimeError(
+            "Incorrect C1/C2 ground material/friction. The selected XML may be an "
+            f"outdated copy: {xml_path}. Expected checkerboard and [0.8,0.2,0.1]."
+        )
+    for prefix in ("FL", "FR", "RL", "RR"):
+        body_name = f"{prefix}_wheel_link"
+        bid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, body_name)
+        if bid < 0:
+            raise RuntimeError(f"Missing {body_name} in {xml_path}")
+        mesh_names = []
+        for gid in range(m.ngeom):
+            if (int(m.geom_bodyid[gid]) == bid and
+                    int(m.geom_type[gid]) == int(mujoco.mjtGeom.mjGEOM_MESH)):
+                mesh_names.append(mujoco.mj_id2name(
+                    m, mujoco.mjtObj.mjOBJ_MESH, int(m.geom_dataid[gid])
+                ))
+        print(f"[WHEEL AUDIT] {body_name}: mesh_assets={mesh_names}", flush=True)
+        if mesh_names != [f"{prefix}_wheel", f"{prefix}_wheel"]:
+            raise RuntimeError(
+                f"{body_name} uses incorrect wheel meshes {mesh_names}. "
+                "C1/C2 require the original *_wheel.STL for visual AND collision."
+            )
+    ee_bid = mujoco.mj_name2id(m,mujoco.mjtObj.mjOBJ_BODY,ee_body_name)
+    if ee_bid < 0:
+        raise RuntimeError(f'Cannot find EE body {ee_body_name}')
+
+    qpos_addr = {}
+    qvel_addr = {}
+    jids = {}
+    for name in all_names:
+        jid = mujoco.mj_name2id(m,mujoco.mjtObj.mjOBJ_JOINT,name)
+        if jid < 0:
+            raise RuntimeError(f'Missing C3 joint {name} in XML {xml_path}')
+        if m.jnt_type[jid] != mujoco.mjtJoint.mjJNT_HINGE:
+            raise RuntimeError(f'Expected hinge joint {name}, got {m.jnt_type[jid]}')
+        jids[name] = jid
+        qpos_addr[name] = int(m.jnt_qposadr[jid])
+        qvel_addr[name] = int(m.jnt_dofadr[jid])
+    leg_qidx = [qpos_addr[name] for name in leg_joint_names]
+    leg_vidx = [qvel_addr[name] for name in leg_joint_names]
+    arm_qidx = [qpos_addr[name] for name in arm_joint_names]
+    arm_vidx = [qvel_addr[name] for name in arm_joint_names]
+    wheel_vidx = [qvel_addr[name] for name in wheel_joint_names]
+
+    actuator_for_joint = {}
+    for i in range(m.nu):
+        jid = int(m.actuator_trnid[i,0])
+        if jid in jids.values():
+            name = mujoco.mj_id2name(m,mujoco.mjtObj.mjOBJ_JOINT,jid)
+            if name in actuator_for_joint:
+                raise RuntimeError(f'Multiple actuators on {name}')
+            actuator_for_joint[name] = i
+    if set(actuator_for_joint) != set(all_names):
+        raise RuntimeError(f'Actuator joint mismatch. Missing: {set(all_names)-set(actuator_for_joint)}')
+    # Match the actual WORKING C1 MJCF, which deliberately mixes actuator types:
+    #   - 12 leg, 6 Z1 arm and 1 gripper joints: <motor> (d.ctrl is torque)
+    #   - 4 wheel joints: <velocity kv="10"> (d.ctrl is target angular velocity)
+    # A velocity servo has an affine velocity-dependent bias and MUST NOT be
+    # checked as a torque motor.  An earlier audit incorrectly rejected C1's
+    # original FR_wheel_joint before the simulation could start.
+    torque_joint_names = leg_joint_names + arm_joint_names + [gripper_joint_name]
+    for joint_name in torque_joint_names:
+        ai = actuator_for_joint[joint_name]
+        if (int(m.actuator_dyntype[ai]) != int(mujoco.mjtDyn.mjDYN_NONE)
+                or int(m.actuator_gaintype[ai]) != int(mujoco.mjtGain.mjGAIN_FIXED)
+                or int(m.actuator_biastype[ai]) != int(mujoco.mjtBias.mjBIAS_NONE)
+                or not np.isclose(m.actuator_gear[ai, 0], 1.0)
+                or not np.isclose(m.actuator_gainprm[ai, 0], 1.0)):
+            raise RuntimeError(f"{joint_name}: expected C1 unit-gear torque motor")
+    print(f"[ACTUATOR AUDIT] PASS: {len(torque_joint_names)} C1 unit-gear torque motors")
+
+    for joint_name in wheel_joint_names:
+        ai = actuator_for_joint[joint_name]
+        # C1 b2wz1.xml: <velocity kv="10" ctrlrange="-50 50"
+        #                         forcerange="-20 20" joint="..." />
+        # Compiled form: gain=kv, affine bias term -kv * joint velocity.
+        if (int(m.actuator_dyntype[ai]) != int(mujoco.mjtDyn.mjDYN_NONE)
+                or int(m.actuator_gaintype[ai]) != int(mujoco.mjtGain.mjGAIN_FIXED)
+                or int(m.actuator_biastype[ai]) != int(mujoco.mjtBias.mjBIAS_AFFINE)
+                or not np.isclose(m.actuator_gear[ai, 0], 1.0)
+                or not np.isclose(m.actuator_gainprm[ai, 0], 10.0)
+                or not np.allclose(m.actuator_biasprm[ai, :3], [0.0, 0.0, -10.0])
+                or not bool(m.actuator_ctrllimited[ai])
+                or not np.allclose(m.actuator_ctrlrange[ai], [-50.0, 50.0])
+                or not bool(m.actuator_forcelimited[ai])
+                or not np.allclose(m.actuator_forcerange[ai], [-20.0, 20.0])):
+            raise RuntimeError(
+                f"{joint_name}: expected C1 wheel velocity servo kv=10, "
+                "ctrlrange=[-50,50], forcerange=[-20,20]; "
+                f"got gain={m.actuator_gainprm[ai,0]}, "
+                f"bias={m.actuator_biasprm[ai,:3]}, "
+                f"ctrlrange={m.actuator_ctrlrange[ai]}, "
+                f"forcerange={m.actuator_forcerange[ai]}"
+            )
+    print(f"[ACTUATOR AUDIT] PASS: {len(wheel_joint_names)} C1 wheel velocity servos (kv=10)")
+    arm_act_indices = [actuator_for_joint[name] for name in arm_joint_names]
+
+    # MuJoCo actuator saturation must never reclip the UAN torque below its final cap.
+    print('MuJoCo arm actuator saturation audit:')
+    for j,name in enumerate(arm_joint_names):
+        act_id = actuator_for_joint[name]
+        lim = float(uan_final_torque_limits[j])
+        checks = [('ctrl',m.actuator_ctrllimited,m.actuator_ctrlrange),
+                  ('force',m.actuator_forcelimited,m.actuator_forcerange)]
+        for tag,limited,ranges in checks:
+            if bool(limited[act_id]) and (ranges[act_id,0] > -lim+1e-6 or ranges[act_id,1] < lim-1e-6):
+                if not sync_mujoco_arm_limits_to_uan:
+                    raise RuntimeError(f'{name} actuator {tag} range clips frozen UAN')
+                print(f'  {name} {tag}: {ranges[act_id].copy()} -> [-{lim:g}, {lim:g}]')
+                ranges[act_id] = [-lim,lim]
+        jid = jids[name]
+        if hasattr(m,'jnt_actfrclimited') and bool(m.jnt_actfrclimited[jid]):
+            ranges = m.jnt_actfrcrange
+            if ranges[jid,0] > -lim+1e-6 or ranges[jid,1] < lim-1e-6:
+                if not sync_mujoco_arm_limits_to_uan:
+                    raise RuntimeError(f'{name} joint actfrcrange clips UAN')
+                ranges[jid] = [-lim,lim]
+
+    d.qpos[:] = 0.0
+    d.qvel[:] = 0.0
+    d.ctrl[:] = 0.0
+    d.qpos[0:3] = root_pos
+    d.qpos[3:7] = root_quat
+    for name in all_names:
+        d.qpos[qpos_addr[name]] = defaults[name]
+    mujoco.mj_forward(m,d)
+
+    # The script's explicit resolved action/observation mapping.
+    print('Policy locomotion action order:',leg_joint_names+wheel_joint_names)
+    print('Policy observation joint order: leg -> arm -> wheel')
+    print('MuJoCo joint qpos indices:',{n:qpos_addr[n] for n in all_names})
+    print('MuJoCo actuator ctrl indices:',actuator_for_joint)
+    print('IK soft limits:',np.column_stack((ik_lower,ik_upper)))
+
+    def get_projected_level_base_pose_world():
+        base_pos_w = d.qpos[0:3].copy().astype(np.float32)
+        base_quat_w = quat_unique_wxyz(d.qpos[3:7].copy().astype(np.float32))
+
+        _, _, yaw = euler_xyz_from_quat_wxyz(base_quat_w)
+        plb_quat_w = quat_from_yaw_wxyz(yaw)
+        plb_quat_w = quat_unique_wxyz(quat_normalize_wxyz(plb_quat_w))
+
+        plb_pos_w = base_pos_w.copy()
+        plb_pos_w[2] = ee_ground_z
+
+        return plb_pos_w, plb_quat_w
+
+    def compute_ee_current_kp_plb() -> np.ndarray:
+        plb_pos_w, plb_quat_w = get_projected_level_base_pose_world()
+
+        ee_pos_w = d.xpos[ee_bid].copy().astype(np.float32)
+        ee_rot_w = d.xmat[ee_bid].reshape(3, 3).copy().astype(np.float32)
+        ee_quat_w = quat_from_rotmat_wxyz(ee_rot_w)
+
+        ee_pos_plb = quat_apply_inverse_wxyz(plb_quat_w, ee_pos_w - plb_pos_w)
+        ee_quat_plb = quat_mul_wxyz(quat_conjugate_wxyz(plb_quat_w), ee_quat_w)
+        ee_quat_plb = quat_unique_wxyz(quat_normalize_wxyz(ee_quat_plb))
+
+        off_x = np.array([ee_kp_dx, 0.0, 0.0], dtype=np.float32)
+        off_z = np.array([0.0, 0.0, ee_kp_dz], dtype=np.float32)
+
+        kp0 = ee_pos_plb
+        kp1 = ee_pos_plb + quat_apply_wxyz(ee_quat_plb, off_x)
+        kp2 = ee_pos_plb + quat_apply_wxyz(ee_quat_plb, off_z)
+        return np.concatenate([kp0, kp1, kp2]).astype(np.float32)
+
+    def ee_kp_plb_to_world(ee_kp_plb: np.ndarray):
+        plb_pos_w, plb_quat_w = get_projected_level_base_pose_world()
+
+        kp0_plb = ee_kp_plb[0:3].astype(np.float32)
+        kp1_plb = ee_kp_plb[3:6].astype(np.float32)
+        kp2_plb = ee_kp_plb[6:9].astype(np.float32)
+
+        kp0_w = plb_pos_w + quat_apply_wxyz(plb_quat_w, kp0_plb)
+        kp1_w = plb_pos_w + quat_apply_wxyz(plb_quat_w, kp1_plb)
+        kp2_w = plb_pos_w + quat_apply_wxyz(plb_quat_w, kp2_plb)
+
+        return kp0_w, kp1_w, kp2_w
+
+    def add_capsule_to_scene(scene, p0, p1, radius, rgba):
+        if scene.ngeom >= scene.maxgeom:
+            return
+
+        p0 = np.asarray(p0, dtype=np.float64)
+        p1 = np.asarray(p1, dtype=np.float64)
+        diff = p1 - p0
+        length = np.linalg.norm(diff)
+        if length < 1e-8:
+            return
+
+        pos = 0.5 * (p0 + p1)
+        mat = make_arrow_mat(diff)
+
+        g = scene.geoms[scene.ngeom]
+        mujoco.mjv_initGeom(
+            g,
+            mujoco.mjtGeom.mjGEOM_CAPSULE,
+            np.array([radius, 0.5 * length, 0.0], dtype=np.float64),
+            pos,
+            mat.reshape(-1),
+            np.array(rgba, dtype=np.float32),
+        )
+        scene.ngeom += 1
+
+    def add_sphere_to_scene(scene, pos, radius, rgba):
+        if scene.ngeom >= scene.maxgeom:
+            return
+
+        g = scene.geoms[scene.ngeom]
+        mujoco.mjv_initGeom(
+            g,
+            mujoco.mjtGeom.mjGEOM_SPHERE,
+            np.array([radius, 0.0, 0.0], dtype=np.float64),
+            np.asarray(pos, dtype=np.float64),
+            np.eye(3, dtype=np.float64).reshape(-1),
+            np.array(rgba, dtype=np.float32),
+        )
+        scene.ngeom += 1
+
+    def visualize_ee_pose(
+        scene,
+        ee_kp_plb: np.ndarray,
+        axis_len: float,
+        axis_radius: float,
+        sphere_size: float,
+        alpha: float,
+        pos_rgba,
+        x_rgba,
+        z_rgba,
+    ):
+        kp0_w, kp1_w, kp2_w = ee_kp_plb_to_world(ee_kp_plb)
+
+        x_dir = kp1_w - kp0_w
+        z_dir = kp2_w - kp0_w
+
+        x_norm = np.linalg.norm(x_dir)
+        z_norm = np.linalg.norm(z_dir)
+        if x_norm < 1e-8 or z_norm < 1e-8:
+            return
+
+        x_dir = x_dir / x_norm
+        z_dir = z_dir / z_norm
+
+        x_end = kp0_w + axis_len * x_dir
+        z_end = kp0_w + axis_len * z_dir
+
+        add_sphere_to_scene(scene, kp0_w, sphere_size, [pos_rgba[0], pos_rgba[1], pos_rgba[2], alpha])
+        add_capsule_to_scene(scene, kp0_w, x_end, axis_radius, [x_rgba[0], x_rgba[1], x_rgba[2], alpha])
+        add_capsule_to_scene(scene, kp0_w, z_end, axis_radius, [z_rgba[0], z_rgba[1], z_rgba[2], alpha])
+
+    def update_custom_visualization(viewer, ee_cmd_plb: np.ndarray):
+        viewer.user_scn.ngeom = 0
+
+        if not vis_ee_target:
+            return
+
+        visualize_ee_pose(
+            viewer.user_scn,
+            ee_kp_plb=ee_cmd_plb,
+            axis_len=vis_ee_target_axis_len,
+            axis_radius=vis_ee_target_axis_radius,
+            sphere_size=vis_ee_target_sphere_size,
+            alpha=vis_ee_target_alpha,
+            pos_rgba=[1.0, 0.0, 0.0, vis_ee_target_alpha],
+            x_rgba=[1.0, 0.0, 0.0, vis_ee_target_alpha],
+            z_rgba=[1.0, 0.0, 0.0, vis_ee_target_alpha],
+        )
+
+        if vis_ee_target_show_current:
+            ee_cur_plb = compute_ee_current_kp_plb()
+            visualize_ee_pose(
+                viewer.user_scn,
+                ee_kp_plb=ee_cur_plb,
+                axis_len=vis_ee_target_axis_len * 0.85,
+                axis_radius=vis_ee_target_axis_radius * 0.8,
+                sphere_size=vis_ee_target_sphere_size * 0.85,
+                alpha=min(1.0, vis_ee_target_alpha),
+                pos_rgba=[0.0, 0.0, 1.0, vis_ee_target_alpha],
+                x_rgba=[0.0, 0.0, 1.0, vis_ee_target_alpha],
+                z_rgba=[0.0, 0.0, 1.0, vis_ee_target_alpha],
+            )
+
+
+    # Direct sampler is training-equivalent; sequential is optional evaluation mode
+    # for the command trajectory, NOT an additional policy/control mode.
+    if ee_command_mode == 'direct':
+        ee_sampler = PresampledKeypointsDirectCommandPLBSim(
+            str(ee_command_path),control_dt,ee_cycle_duration_s,ee_command_seed)
+    elif ee_command_mode == 'sequential':
+        ee_sampler = SequentialKeypointsTrajectoryCommandPLBSim(
+            str(ee_command_path),control_dt,
+            float(cfg.get('ee_sequential_traj_duration_s',2.0)),
+            float(cfg.get('ee_sequential_hold_duration_s',1.0)))
+    else:
+        raise ValueError(f'Unsupported EE command_mode {ee_command_mode}')
+    ee_sampler.reset(compute_ee_current_kp_plb(),sample_first=True)
+    ee_cmd_plb_current = ee_sampler.command.copy()
+
+    # Frozen UAN history: joint-major, oldest->newest, (position_error,velocity).
+    uan_history = np.zeros((6,uan_history_length,2),dtype=np.float32)
+    last_uan_action = np.zeros(6,dtype=np.float32)
+    last_uan_delta_tau = np.zeros(6,dtype=np.float32)
+    last_uan_tau_pd = np.zeros(6,dtype=np.float32)
+
+    def compute_uan_arm_torque(q_des: np.ndarray,q: np.ndarray,qd: np.ndarray) -> np.ndarray:
+        pos_err = (q_des.astype(np.float32)-q.astype(np.float32))*uan_pos_scale
+        vel = qd.astype(np.float32)*uan_vel_scale
+        uan_history[:,:-1,:] = uan_history[:,1:,:]
+        uan_history[:,-1,0] = pos_err
+        uan_history[:,-1,1] = vel
+        net_in = torch.from_numpy(np.ascontiguousarray(uan_history.reshape(1,-1))).to(uan_device)
+        with torch.inference_mode():
+            action = uan(net_in)
+            if isinstance(action,(tuple,list)):
+                action = action[0]
+        action = np.asarray(action.detach().cpu().numpy(),dtype=np.float32).reshape(6)
+        if not np.isfinite(action).all() or (np.abs(action)>1.001).any():
+            raise FloatingPointError(f'Invalid UAN Beta-mean action: {action}')
+        tau_pd = uan_kp*(q_des-q)-uan_kd*qd
+        tau_nom = np.clip(tau_pd,-uan_nominal_torque_limits,uan_nominal_torque_limits)
+        delta_tau = action*uan_action_scale*uan_kp
+        tau = np.clip(tau_nom+delta_tau,-uan_final_torque_limits,uan_final_torque_limits)
+        last_uan_action[:] = action
+        last_uan_delta_tau[:] = delta_tau
+        last_uan_tau_pd[:] = tau_pd
+        return tau.astype(np.float64)
+
+    # Persistent reference and reset hold are distinct from a stateless IK.
+    ik_reference = d.qpos[arm_qidx].copy()
+    ik_just_reset = True
+    ik_last_delta = np.zeros(6,dtype=np.float64)
+
+    def update_stateful_arm_ik(ee_cmd_plb: np.ndarray) -> np.ndarray:
+        nonlocal ik_reference,ik_just_reset,ik_last_delta
+        q_current = d.qpos[arm_qidx].copy().astype(np.float64)
+        plb_pos_w,plb_quat_w = get_projected_level_base_pose_world()
+        # PLB local goal position and right-handed orientation -> world goal.
+        desired_plb = np.asarray(ee_cmd_plb,dtype=np.float64).reshape(3,3)
+        target_pos_w = plb_pos_w.astype(np.float64) + quat_apply_wxyz(
+            plb_quat_w,desired_plb[0].astype(np.float32)).astype(np.float64)
+        R_plb = np.eye(3,dtype=np.float64)
+        yaw = euler_xyz_from_quat_wxyz(quat_unique_wxyz(d.qpos[3:7].astype(np.float32)))[2]
+        c,s = np.cos(yaw),np.sin(yaw)
+        R_plb[:,:] = ((c,-s,0),(s,c,0),(0,0,1))
+        target_rot_w = R_plb @ _rotation_from_keypoints(ee_cmd_plb)
+        actual_pos_w = d.xpos[ee_bid].copy().astype(np.float64)
+        actual_rot_w = d.xmat[ee_bid].reshape(3,3).copy().astype(np.float64)
+        pos_error_w = target_pos_w-actual_pos_w
+        rot_error_w = _rotation_error_axis_angle(actual_rot_w,target_rot_w)
+        task_error = np.concatenate((ik_pos_gain*pos_error_w,ik_ori_gain*rot_error_w))
+
+        # mj_jac computes at the EE BODY ORIGIN in WORLD axes (not COM).
+        # This matches the PhysX Jacobian's COM->link-origin correction.
+        jacp = np.zeros((3,m.nv),dtype=np.float64)
+        jacr = np.zeros((3,m.nv),dtype=np.float64)
+        mujoco.mj_jac(m,d,jacp,jacr,actual_pos_w,ee_bid)
+        J = np.vstack((jacp[:,arm_vidx],jacr[:,arm_vidx]))
+        if J.shape != (6,6):
+            raise RuntimeError(f'Wrong world-frame arm Jacobian shape: {J.shape}')
+        # DLS: dq = J^T (J J^T + lambda^2 I)^-1 e.
+        dq = J.T @ np.linalg.solve(J @ J.T + (ik_damping**2)*np.eye(6),task_error)
+        largest = float(np.max(np.abs(dq)))
+        if largest>ik_max_delta:
+            dq *= ik_max_delta/max(largest,1e-6)
+        ik_last_delta[:] = dq
+        # First post-reset update stays at measured q, matching _just_reset.
+        if ik_just_reset:
+            ik_reference = q_current.copy()
+            ik_just_reset = False
+        else:
+            q_candidate = np.clip(ik_reference + ik_reference_gain*dq,ik_lower,ik_upper)
+            lead = np.clip(q_candidate-q_current,-ik_max_lead,ik_max_lead)
+            ik_reference = q_current + lead
+        if not np.isfinite(ik_reference).all():
+            ik_reference = q_current.copy()
+        return ik_reference.copy()
+
+    last_action = np.zeros(16,dtype=np.float32)
+
+    # Each ObservationTerm stores its own five-frame history, matching Isaac Lab.
+    term_names = (
+        'base_ang_vel','projected_gravity','velocity_commands','ee_kp_commands',
+        'joint_pos_leg','joint_pos_arm','joint_vel_leg','joint_vel_arm',
+        'joint_vel_wheel','actions'
+    )
+    term_dims = (3,3,3,9,12,6,12,6,4,16)
+    assert sum(term_dims)==obs_dim_per_step
+
+    def build_obs_terms(ee_cmd_plb: np.ndarray) -> tuple[np.ndarray,...]:
+        base_ang_vel_b = get_sensor_slice(m,d,'imu_gyro').astype(np.float32)
+        base_quat_w = quat_unique_wxyz(d.qpos[3:7].copy().astype(np.float32))
+        gravity = np.array([0.0,0.0,-1.0],dtype=np.float32)
+        projected_gravity_b = quat_rotate_inverse_numpy(base_quat_w,gravity).astype(np.float32)
+        pos_leg = (d.qpos[leg_qidx] - np.array([defaults[n] for n in leg_joint_names])).astype(np.float32)
+        pos_arm = (d.qpos[arm_qidx] - np.array([defaults[n] for n in arm_joint_names])).astype(np.float32)
+        vel_leg = d.qvel[leg_vidx].copy().astype(np.float32)
+        vel_arm = d.qvel[arm_vidx].copy().astype(np.float32)
+        vel_wheel = d.qvel[wheel_vidx].copy().astype(np.float32)
+        values = (base_ang_vel_b,projected_gravity_b,base_command,ee_cmd_plb,
+                  pos_leg,pos_arm,vel_leg,vel_arm,vel_wheel,last_action)
+        for name,value,dim in zip(term_names,values,term_dims):
+            _check_shape(f'ObservationTerm {name}',value,(dim,))
+        return values
+
+    histories = [deque(maxlen=history_length) for _ in term_names]
+    for history,value in zip(histories,build_obs_terms(ee_cmd_plb_current)):
+        for _ in range(history_length):
+            history.append(value.copy())
+
+    leg_target = np.array([defaults[n] for n in leg_joint_names],dtype=np.float64)
+    arm_target = d.qpos[arm_qidx].copy().astype(np.float64)
+    wheel_cmd = np.zeros(4,dtype=np.float64)
+    gripper_target = float(defaults[gripper_joint_name])
+    leg_kp = np.array([gains_kp[n] for n in leg_joint_names])
+    leg_kd = np.array([gains_kd[n] for n in leg_joint_names])
+    gripper_kp = float(gains_kp[gripper_joint_name])
+    gripper_kd = float(gains_kd[gripper_joint_name])
+
+    sim_time = 0.0
+    counter = 0
+    policy_tick = 0
+    viewer_context = nullcontext(None) if args.headless else mujoco.viewer.launch_passive(m,d)
+    with viewer_context as viewer:
+        if viewer is not None:
+            # The ground is group 0. Restore the C1/C2 scene if the viewer
+            # inherited disabled geom groups from a previous session.
+            with viewer.lock():
+                for geom_group in (0, 1, 2):
+                    viewer.opt.geomgroup[geom_group] = 1
+            viewer.cam.type = mujoco.mjtCamera.mjCAMERA_FREE
+            viewer.cam.azimuth = 135
+            viewer.cam.elevation = -20
+            viewer.cam.distance = 3.0
+            viewer.cam.lookat[:] = d.qpos[:3]
+        while sim_time<simulation_duration and (viewer is None or viewer.is_running()):
+            wall_start = time.monotonic()
+            # Apply control targets at 250Hz. IK target is held across 5 physics steps.
+            leg_pos = d.qpos[leg_qidx].copy()
+            leg_vel = d.qvel[leg_vidx].copy()
+            arm_pos = d.qpos[arm_qidx].copy()
+            arm_vel = d.qvel[arm_vidx].copy()
+            grip_pos = float(d.qpos[qpos_addr[gripper_joint_name]])
+            grip_vel = float(d.qvel[qvel_addr[gripper_joint_name]])
+            leg_tau = np.clip(leg_kp*(leg_target-leg_pos)-leg_kd*leg_vel,
+                              -leg_torque_limits,leg_torque_limits)
+            arm_tau = compute_uan_arm_torque(arm_target,arm_pos,arm_vel)
+            grip_tau = float(np.clip(gripper_kp*(gripper_target-grip_pos)-gripper_kd*grip_vel,
+                                     -gripper_torque_limit,gripper_torque_limit))
+            wheel_ctrl = np.clip(wheel_cmd,-wheel_velocity_limits,wheel_velocity_limits)
+            d.ctrl[:] = 0.0
+            for name,torque in zip(leg_joint_names,leg_tau):
+                d.ctrl[actuator_for_joint[name]] = torque
+            for name,torque in zip(arm_joint_names,arm_tau):
+                d.ctrl[actuator_for_joint[name]] = torque
+            for name,velocity in zip(wheel_joint_names,wheel_ctrl):
+                d.ctrl[actuator_for_joint[name]] = velocity
+            d.ctrl[actuator_for_joint[gripper_joint_name]] = grip_tau
+
+            mujoco.mj_step(m,d)
+            sim_time += simulation_dt
+            if viewer is not None:
+                viewer.cam.lookat[:] = d.qpos[:3]
+
+            if counter % control_decimation == 0:
+                ee_cmd_plb_current = ee_sampler.update()
+                for history,value in zip(histories,build_obs_terms(ee_cmd_plb_current)):
+                    history.append(value.copy())
+                obs_stack = np.concatenate([np.asarray(h,dtype=np.float32).reshape(-1) for h in histories])
+                if obs_stack.shape != (obs_dim,) or not np.isfinite(obs_stack).all():
+                    raise RuntimeError(f'Invalid actor observation shape or values: {obs_stack.shape}')
+                raw_action = sess.run([output_name],{input_name:obs_stack[None,:]})[0]
+                raw_action = np.asarray(raw_action,dtype=np.float32).reshape(-1)
+                if raw_action.shape != (16,) or not np.isfinite(raw_action).all():
+                    raise FloatingPointError(f'Invalid policy action shape/values: {raw_action}')
+                last_action[:] = raw_action  # observation is unscaled raw PPO action
+
+                if sim_time < startup_hold_s:
+                    blend = 0.0
+                elif startup_blend_s > 0:
+                    blend = float(np.clip((sim_time-startup_hold_s)/startup_blend_s,0.0,1.0))
+                else:
+                    blend = 1.0
+                leg_target = np.array([defaults[n] for n in leg_joint_names]) + \
+                             blend*leg_action_scale*raw_action[0:12].astype(np.float64)
+                wheel_cmd = blend*wheel_action_scale*raw_action[12:16].astype(np.float64)
+                # No RL arm action.  Stateful DLS IK always owns arm target.
+                arm_target = update_stateful_arm_ik(ee_cmd_plb_current)
+                policy_tick += 1
+
+            if viewer is not None:
+                update_custom_visualization(viewer,ee_cmd_plb_current)
+            if counter % 200 == 0:
+                curr_ee_kp = compute_ee_current_kp_plb()
+                kp_errors = np.linalg.norm((ee_cmd_plb_current-curr_ee_kp).reshape(3,3),axis=1)
+                arm_err = arm_target-d.qpos[arm_qidx]
+                print(f'[C3 t={sim_time:6.2f}s] z={d.qpos[2]:.3f} '
+                      f'ee_kp_err={np.array2string(kp_errors,precision=3)} '
+                      f'arm_rms={np.sqrt(np.mean(arm_err**2)):.4f} '
+                      f'ik_delta_max={np.max(np.abs(ik_last_delta)):.3f} '
+                      f'uan_sat={np.mean(np.abs(last_uan_action)>uan_action_saturation_threshold):.3f} '
+                      f'uan_residual={np.mean(np.abs(last_uan_delta_tau)):.2f}Nm '
+                      f'policy_ticks={policy_tick}')
+            counter += 1
+            if viewer is not None:
+                viewer.sync()
+                remaining = simulation_dt-(time.monotonic()-wall_start)
+                if remaining>0:
+                    time.sleep(remaining)
+
+
+if __name__=='__main__':
+    main()

@@ -1,0 +1,244 @@
+# B2WZ1 hierarchical dynamic-transport sim2sim with frozen WBC + frozen UAN.
+#
+# Run from unitree_mujoco/simulate_python:
+#
+#   python3 deploy_mujoco/b2wz1_hl_transport_uan_v1.py \
+#       configs/b2wz1_hl_transport_uan_v1.yaml
+#
+# Hierarchy:
+#   MuJoCo/UAN physics = 250 Hz
+#   frozen WBC         =  50 Hz
+#   high-level policy  =  10 Hz
+#
+# Transport actor:
+#   64-D/frame x 3-frame FEATURE-MAJOR history = 192-D
+#   6-D EE pose residual [dx,dy,dz,dyaw,dpitch,droll]
+#   actor observes puck center position [x_D, y_D, z_D] in disk frame.
+#   Training adds U(-0.01,+0.01) m noise; sim2sim uses noiseless MuJoCo state.
+
+# ---------------- Policies / model ----------------
+# IMPORTANT: verify that low_policy_path is exported from the frozen WBC run
+# actually used by this training file:
+#   2026-09-26_18-52-36_uan_model_4000_multipose20260907/exported/policy.pt
+# An old retrieval ONNX with the same 400-D input is NOT necessarily equivalent.
+# The existing file path below is preserved; change it if it holds old weights.
+low_policy_path: "exported_policy/b2wz1_hl_retrieval_uan/low_policy.onnx"
+high_policy_path: "exported_policy/b2wz1_hl_transport_uan/high_policy_2.onnx"
+uan_model_path: "exported_policy/b2wz1_hl_retrieval_uan/model_4000_inference.pt"
+
+# Robot + rigid disk + free puck MJCF generated for this task.
+# This supplied MJCF includes a collision ground and the new 5-cm/8-cm puck.
+# Copy the included XML into unitree_robots/b2wz1/ next to the assets/ directory.
+xml_path: "unitree_robots/b2wz1/b2wz1_disk_puck.xml"
+
+# Explicit MuJoCo collision-floor geom.
+ground_geom: "floor"
+
+simulation_duration: 180.0
+simulation_dt: 0.004
+
+# 250 Hz / 5 = 50 Hz WBC.
+ll_control_decimation: 5
+# 50 Hz / 5 = 10 Hz high level.
+ll_steps_per_hl_step: 5
+
+# ---------------- Low-level policy interface ----------------
+ll_history_length: 5
+ll_obs_dim_per_step: 80
+ll_obs_dim: 400
+ll_action_dim: 22
+
+# ---------------- High-level policy interface ----------------
+hl_history_length: 3
+hl_obs_dim_per_step: 64
+hl_obs_dim: 192
+hl_action_dim: 6
+
+# ---------------- Robot reset / actuation ----------------
+root_pos: [0.0, 0.0, 0.6017]
+root_quat_wxyz: [1.0, 0.0, 0.0, 0.0]
+
+# MuJoCo qpos robot-joint order:
+# FL leg+wheel, FR leg+wheel, RL leg+wheel, RR leg+wheel,
+# joint1..joint6, jointGripper.
+default_joint_pos: [
+  0.1, 0.8, -1.5, 0.0,
+ -0.1, 0.8, -1.5, 0.0,
+  0.1, 1.0, -1.5, 0.0,
+ -0.1, 1.0, -1.5, 0.0,
+  0.0, 1.48, -1.0, -0.54, 0.0, 1.57, 0.0
+]
+
+kps: [
+  200.0, 200.0, 300.0, 0.0,
+  200.0, 200.0, 300.0, 0.0,
+  200.0, 200.0, 300.0, 0.0,
+  200.0, 200.0, 300.0, 0.0,
+  64.0, 115.2, 64.0, 64.0, 64.0, 64.0, 76.8
+]
+
+kds: [
+  8.0, 8.0, 12.0, 10.0,
+  8.0, 8.0, 12.0, 10.0,
+  8.0, 8.0, 12.0, 10.0,
+  8.0, 8.0, 12.0, 10.0,
+  3.0, 4.0, 3.0, 3.0, 3.0, 3.0, 4.0
+]
+
+leg_action_scale: 0.25
+arm_action_scale: [0.10, 0.10, 0.10, 0.10, 0.10, 0.10]
+wheel_action_scale: 4.0
+
+leg_torque_limits: [
+  200.0, 200.0, 320.0,
+  200.0, 200.0, 320.0,
+  200.0, 200.0, 320.0,
+  200.0, 200.0, 320.0
+]
+wheel_velocity_limits: [50.0, 50.0, 50.0, 50.0]
+
+# ---------------- Frozen UAN actuator ----------------
+uan_device: "cpu"
+uan_history_length: 25
+uan_pos_scale: 1.0
+uan_vel_scale: 0.05
+uan_action_scale: 0.20
+
+uan_kp: [64.0, 115.2, 64.0, 64.0, 64.0, 64.0]
+uan_kd: [3.0, 4.0, 3.0, 3.0, 3.0, 3.0]
+uan_nominal_torque_limits: [30.0, 60.0, 30.0, 30.0, 30.0, 30.0]
+uan_final_torque_limits: [45.0, 90.0, 45.0, 45.0, 45.0, 45.0]
+uan_action_saturation_threshold: 0.95
+sync_mujoco_arm_limits_to_uan: true
+
+# ---------------- Fixed gripper ----------------
+# Dynamic transport has no gripper action.  Keep jointGripper at the same
+# closed/fixed position used in Isaac Lab training.
+gripper_hold_pos: 0.0
+gripper_mode: "pd_position"
+gripper_torque_limit: 30.0
+gripper_saturation_effort: 30.0
+gripper_velocity_limit: 2.0
+gripper_pd_kp: 64.0
+gripper_pd_kd: 10.0
+gripper_pd_torque_limit: 30.0
+
+# ---------------- PLB / WBC EE interface ----------------
+ee_body: "gripperStator"
+ground_z: 0.0
+ee_kp_dx: 0.30
+ee_kp_dz: 0.30
+
+# Nominal locked-FK fallback/template; runtime HIGH is measured dynamically.
+neutral_kp0: [0.547845, -0.0, 1.116555]
+neutral_ee_yaw: 0.0
+neutral_ee_pitch: -0.06
+neutral_ee_roll: 1.5707963267948966
+
+# Frozen WBC command bounds used by transport training.
+base_cmd_scale: [0.6, 0.6, 0.6]
+kp0_x_range: [0.40, 0.90]
+kp0_y_range: [-0.40, 0.40]
+kp0_z_range: [0.10, 1.20]
+ee_yaw_range: [-1.0471975511965976, 1.0471975511965976]
+ee_pitch_range: [-0.7853981633974483, 0.7853981633974483]
+ee_roll_range: [0.7853981633974483, 2.356194490192345]
+
+# 6-D normalized residual: EE XYZ +/-0.10 m, EE yaw/pitch/roll +/-45 deg.
+# No high-level base-velocity residual.
+ee_pos_action_residual_scale: [0.10, 0.10, 0.10]
+ee_rot_action_residual_scale: [0.7853981633974483, 0.7853981633974483, 0.7853981633974483]
+
+# ---------------- Dynamic-transport task references ----------------
+# Four canonical position references follow the training minimum-jerk trajectory.
+# The selected target is re-sampled uniformly every 4-5 s.
+#
+# HIGH is dynamic per episode:
+#   1) immediately after robot reset, the measured MuJoCo EE kp0 in PLB is used
+#      as the temporary HIGH hold reference during the 0.5-s settle;
+#   2) after the final settle transition, EE kp0 is measured again and that
+#      dynamically settled value becomes the episode HIGH target.
+# LOW / LEFT / RIGHT remain the fixed configured positions below.
+random_seed: 0
+episode_length_s: 15.0
+auto_reset: true
+
+reset_settle_time_s: 0.5
+base_ref_resample_time_range_s: [3.0, 5.0]
+base_ref_ranges: [
+  [-0.6, 0.6],
+  [-0.6, 0.6],
+  [-0.6, 0.6]
+]
+
+# Independently random 4-5 s duration inclusive, every target switch.
+ee_ref_resample_time_range_s: [4.0, 5.0]
+# NOTE: the HIGH pose is dynamically measured in PLB after 0.5-s settling.
+
+# Minimum-jerk EE-position transition durations.
+# Target HIGH/LEFT/RIGHT -> fast duration.
+# Target LOW             -> low-pose duration.
+ee_fast_transition_time_s: 1.5
+ee_low_transition_time_s: 2.0
+
+# Fixed index order: HIGH, LOW, LEFT, RIGHT.
+# Entry 0 is only the nominal HIGH fallback/template before a live measurement
+# is available.  Active HIGH targets use the measured per-episode HIGH.
+canonical_ee_positions: [
+  [0.547845, -0.00, 1.116555],
+  [0.75,      0.00, 0.35],
+  [0.65,      0.30, 0.80],
+  [0.65,     -0.30, 0.80]
+]
+canonical_ee_yaw: 0.0
+canonical_ee_pitch: -0.06
+canonical_ee_roll: 1.5707963267948966
+
+# ---------------- Disk / puck ----------------
+disk_center_offset_gripper: [0.100, 0.045, 0.0]
+disk_x_axis_gripper: [1.0, 0.0, 0.0]
+disk_y_axis_gripper: [0.0, 0.0, -1.0]
+disk_z_axis_gripper: [0.0, 1.0, 0.0]
+disk_thickness: 0.004
+
+puck_body: "transport_puck"
+puck_freejoint: "transport_puck_freejoint"
+puck_geom: "transport_puck_geom"
+disk_collision_geom: "disk_collision"
+
+puck_radius: 0.05
+puck_height: 0.08
+
+# CONFIGURABLE SIM2SIM PAYLOAD MASS [kg].
+# Training randomizes mass over [0.50, 1.50] kg at startup.
+# Evaluation fixes mass at 0.50 kg by default; change to 1.0 or 1.5 for tests.
+# Python also computes physically correct cylinder inertia from mass and size.
+puck_mass: 0.50
+# Training puck friction randomization: U(0.30,1.00). Sim2sim uses fixed 0.60.
+puck_friction: 0.60
+
+# Keep task stochasticity from training while disabling physical DR/noise.
+puck_spawn_xy_randomization: 0.01
+puck_spawn_clearance: 0.0005
+puck_disk_contact_force_threshold: 0.05
+puck_drop_no_contact_steps: 5
+
+# Early termination mirrors the training task.  These can be disabled for
+# debugging without changing policy observations/actions.
+terminate_on_puck_drop: true
+terminate_on_base_contact: true
+base_contact_force_threshold: 1.0
+
+# ---------------- Visualization / diagnostics ----------------
+# Magenta = exogenous EE reference; red/blue = final WBC EE command.
+vis_task_ee_reference: true
+vis_wbc_ee_command: true
+vis_axis_len: 0.18
+vis_axis_radius: 0.008
+vis_sphere_size: 0.025
+
+print_interval_sim_steps: 200
+
+debug_tracking_logging: false
+debug_tracking_log_every_ll_steps: 1
+debug_tracking_csv_path: "logs/b2wz1_hl_transport_uan_v1_tracking_debug.csv"

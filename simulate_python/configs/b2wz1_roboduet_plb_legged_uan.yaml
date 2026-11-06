@@ -1,0 +1,59 @@
+# C6 Stage2 RoboDuet fixed-wheel / legged-only: ARM 310->8, LOCO 295->12, physical 18D.
+# Requires unchanged PASSed C2/C4 b2wz1_legged.xml (wheel meshes welded to calves).
+# ONNX paths match the EXISTING folders shown in the user's workspace screenshots.
+# Both ONNX files contain their trained actor observation normalizers.
+# export_manifest.json is OPTIONAL in this copied folder, but ONNX I/O shapes
+# and model/actuator/asset contracts are validated at startup.
+# IMPORTANT: confirm the resolved IsaacLab 12-leg action order with included auditor.
+arm_policy_path: exported_policy/b2wz1_roboduet_plb_legged_uan/arm_policy.onnx
+loco_policy_path: exported_policy/b2wz1_roboduet_plb_legged_uan/loco_policy.onnx
+require_verified_manifest: false
+uan_model_path: exported_policy/b2wz1_wbc_plb_uan/model_4000_inference.pt
+xml_path: unitree_robots/b2wz1/b2wz1_legged.xml
+simulation_duration: 180.0
+simulation_dt: 0.004
+control_decimation: 5
+startup_hold_s: 1.0
+startup_blend_s: 2.0
+history_length: 5
+base_command: [0.5, 0.0, 0.0]
+root_pos: [0.0, 0.0, 0.6017]
+root_quat_wxyz: [1.0, 0.0, 0.0, 0.0]
+leg_action_joint_names: [FL_hip_joint, FR_hip_joint, RL_hip_joint, RR_hip_joint, FL_thigh_joint,
+  FR_thigh_joint, RL_thigh_joint, RR_thigh_joint, FL_calf_joint, FR_calf_joint, RL_calf_joint,
+  RR_calf_joint]
+wheel_action_joint_names: []
+config_joint_names: [FL_hip_joint, FL_thigh_joint, FL_calf_joint, FR_hip_joint, FR_thigh_joint,
+  FR_calf_joint, RL_hip_joint, RL_thigh_joint, RL_calf_joint, RR_hip_joint, RR_thigh_joint,
+  RR_calf_joint, joint1, joint2, joint3, joint4, joint5, joint6, jointGripper]
+default_joint_pos: [0.1, 0.8, -1.5, -0.1, 0.8, -1.5, 0.1, 1.0, -1.5, -0.1, 1.0, -1.5,
+  0.0, 1.48, -1.0, -0.54, 0.0, 1.57, 0.0]
+kps: [200.0, 200.0, 300.0, 200.0, 200.0, 300.0, 200.0, 200.0, 300.0, 200.0, 200.0,
+  300.0, 64.0, 115.2, 64.0, 64.0, 64.0, 64.0, 64.0]
+kds: [8.0, 8.0, 12.0, 8.0, 8.0, 12.0, 8.0, 8.0, 12.0, 8.0, 8.0, 12.0, 3.0, 4.0, 3.0,
+  3.0, 3.0, 3.0, 3.0]
+leg_action_scale: 0.25
+arm_action_scale: 0.1
+leg_torque_limits: [200.0, 200.0, 200.0, 200.0, 200.0, 200.0, 200.0, 200.0, 320.0,
+  320.0, 320.0, 320.0]
+gripper_torque_limit: 30.0
+uan_device: cpu
+uan_history_length: 25
+uan_pos_scale: 1.0
+uan_vel_scale: 0.05
+uan_action_scale: 0.2
+uan_kp: [64.0, 115.2, 64.0, 64.0, 64.0, 64.0]
+uan_kd: [3.0, 4.0, 3.0, 3.0, 3.0, 3.0]
+uan_nominal_torque_limits: [30.0, 60.0, 30.0, 30.0, 30.0, 30.0]
+uan_final_torque_limits: [45.0, 90.0, 45.0, 45.0, 45.0, 45.0]
+sync_mujoco_arm_limits_to_uan: true
+guidance_rate_rad_s: 0.35
+ee_body: gripperStator
+ee_command_path: utilities/data/keypoints_plb_evaluation_filtered.npy
+ee_kp_dx: 0.3
+ee_kp_dz: 0.3
+ee_ground_z: 0.0
+ee_cycle_duration_s: 5.0
+ee_command_seed: 0
+vis_ee_target: true
+report_every_physics_steps: 200

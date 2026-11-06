@@ -1,0 +1,137 @@
+# C3: VBC (CoRL 2024)-inspired wheeled-legged locomotion RL + stateful arm DLS IK.
+# Full-policy deployment only. The 6D IK targets are NOT PPO actions.
+# C3 checkpoint model_9999.pt must be exported to ONNX with the trained
+# actor observation normalizer included.
+# All unitree_robots/, exported_policy/ and utilities/ paths resolve repo-root FIRST.
+# Use the actual exported checkpoint file below (user-specified policy_3.onnx).
+policy_path: "exported_policy/b2wz1_vbc_plb_uan/policy_3.onnx"
+uan_model_path: "exported_policy/b2wz1_wbc_plb_uan/model_4000_inference.pt"
+
+# Reuse C1's wheeled-legged model. ground.xml should include b2wz1.xml
+# and its original ground setup; no C3-specific XML is required.
+xml_path: "unitree_robots/b2wz1/ground.xml"
+
+simulation_duration: 180.0
+simulation_dt: 0.004
+control_decimation: 5
+startup_hold_s: 1.0
+startup_blend_s: 2.0
+
+# 74D per frame x 5, TERM-MAJOR histories; 16D actor action.
+history_length: 5
+obs_dim_per_step: 74
+obs_dim: 370
+action_dim: 16
+base_command: [0.5, 0.0, 0.0]
+root_pos: [0.0, 0.0, 0.6017]
+root_quat_wxyz: [1.0, 0.0, 0.0, 0.0]
+
+# All arrays below are indexed by config_joint_names (MuJoCo model order),
+# NOT by the actual Isaac Lab resolved RL action order.
+config_joint_names:
+  - FL_hip_joint
+  - FL_thigh_joint
+  - FL_calf_joint
+  - FL_wheel_joint
+  - FR_hip_joint
+  - FR_thigh_joint
+  - FR_calf_joint
+  - FR_wheel_joint
+  - RL_hip_joint
+  - RL_thigh_joint
+  - RL_calf_joint
+  - RL_wheel_joint
+  - RR_hip_joint
+  - RR_thigh_joint
+  - RR_calf_joint
+  - RR_wheel_joint
+  - joint1
+  - joint2
+  - joint3
+  - joint4
+  - joint5
+  - joint6
+  - jointGripper
+
+default_joint_pos:
+  [0.1, 0.8, -1.5, 0.0,
+   -0.1, 0.8, -1.5, 0.0,
+   0.1, 1.0, -1.5, 0.0,
+   -0.1, 1.0, -1.5, 0.0,
+   0.0, 1.48, -1.0, -0.54, 0.0, 1.57, 0.0]
+
+# Leg/Gripper nominal PD, and original C1 metadata for wheel/arm slots.
+# Frozen arm UAN implements its own explicit Kp/Kd below.
+kps:
+  [200.0, 200.0, 300.0, 0.0,
+   200.0, 200.0, 300.0, 0.0,
+   200.0, 200.0, 300.0, 0.0,
+   200.0, 200.0, 300.0, 0.0,
+   64.0, 115.2, 64.0, 64.0, 64.0, 64.0, 64.0]
+kds:
+  [8.0, 8.0, 12.0, 10.0,
+   8.0, 8.0, 12.0, 10.0,
+   8.0, 8.0, 12.0, 10.0,
+   8.0, 8.0, 12.0, 10.0,
+   3.0, 4.0, 3.0, 3.0, 3.0, 3.0, 3.0]
+
+# Action order is legs grouped by type (4 hips, 4 thighs, 4 calves),
+# then wheels FL/FR/RL/RR. No arm action scale or arm PPO actions.
+leg_action_scale: 0.25
+wheel_action_scale: 4.0
+leg_torque_limits: [200.0, 200.0, 200.0, 200.0, 200.0, 200.0, 200.0, 200.0, 320.0, 320.0, 320.0, 320.0]
+wheel_velocity_limits: [50.0, 50.0, 50.0, 50.0]
+gripper_torque_limit: 30.0
+
+# Frozen Z1 UAN from C1 / UNITREE_B2WZ1_UAN_CFG, model_4000.
+uan_device: "cpu"
+uan_history_length: 25
+uan_pos_scale: 1.0
+uan_vel_scale: 0.05
+uan_action_scale: 0.20
+uan_kp: [64.0, 115.2, 64.0, 64.0, 64.0, 64.0]
+uan_kd: [3.0, 4.0, 3.0, 3.0, 3.0, 3.0]
+uan_nominal_torque_limits: [30.0, 60.0, 30.0, 30.0, 30.0, 30.0]
+uan_final_torque_limits: [45.0, 90.0, 45.0, 45.0, 45.0, 45.0]
+uan_action_saturation_threshold: 0.95
+sync_mujoco_arm_limits_to_uan: true
+
+# C3 EnvironmentCfg's CommandDrivenArmIKActionCfg; overrides class defaults.
+# These limits are from the previously supplied B2WZ1 training URDF,
+# not the C1 MJCF (which uses a different upper bound for joint2).
+arm_ik:
+  control_mode: "stateful"
+  damping: 0.05
+  position_gain: 1.0
+  orientation_gain: 1.0
+  max_joint_delta: 0.10
+  joint_limit_margin: 0.01
+  reference_gain: 0.20
+  max_reference_lead: 0.50
+  soft_joint_pos_limit_factor: 0.9
+  arm_hard_joint_limits:
+    - [-2.6179938779914944, 2.6179938779914944] # joint1
+    - [0.0, 2.8798]                         # joint2
+    - [-2.8797932657906435, 0.0]           # joint3
+    - [-1.5184364492350666, 1.5184364492350666] # joint4
+    - [-1.3439035240356338, 1.3439035240356338] # joint5
+    - [-2.792526803190927, 2.792526803190927]   # joint6
+
+# Same C1/C3 PLB 9D goal, gripperStator EE body.
+ee_body: "gripperStator"
+ee_command_mode: "direct"  # training-equivalent random sample-and-hold; or sequential eval
+ee_command_path: "utilities/data/keypoints_plb_evaluation_filtered.npy"
+ee_ground_z: 0.0
+ee_kp_dx: 0.30
+ee_kp_dz: 0.30
+ee_command_seed: 0
+ee_cycle_duration_s: 8.0
+ee_sequential_traj_duration_s: 2.0
+ee_sequential_hold_duration_s: 1.0
+
+vis_ee_target: true
+vis_ee_target_axis_len: 0.20
+vis_ee_target_axis_radius: 0.01
+vis_ee_target_sphere_size: 0.03
+vis_ee_target_alpha: 0.9
+vis_ee_target_show_current: true

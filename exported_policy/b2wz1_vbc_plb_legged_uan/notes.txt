@@ -1,0 +1,3 @@
+policy_1 uses reference gain = 0.10
+policy_2 uses reference gain = 0.15
+policy_3 uses reference gain = 0.20

@@ -31,6 +31,7 @@ import sys
 import time
 import argparse
 from collections import deque
+from contextlib import nullcontext
 
 import mujoco
 import mujoco.viewer
@@ -232,6 +233,11 @@ if __name__ == "__main__":
         default="full-policy",
         choices=["pd-stand", "lock-arm-policy", "full-policy"],
         help="Run mode",
+    )
+    parser.add_argument(
+        "--headless", action="store_true",
+        help="Run without the MuJoCo viewer and without wall-clock pacing. "
+             "Default off: the standalone interactive behaviour is unchanged.",
     )
     args = parser.parse_args()
 
@@ -907,14 +913,16 @@ if __name__ == "__main__":
     policy_tick = 0
     sim_time = 0.0
 
-    with mujoco.viewer.launch_passive(m, d) as viewer:
-        viewer.cam.type = mujoco.mjtCamera.mjCAMERA_FREE
-        viewer.cam.azimuth = 135
-        viewer.cam.elevation = -20
-        viewer.cam.distance = 3.0
-        viewer.cam.lookat[:] = d.qpos[:3]
+    viewer_cm = nullcontext(None) if args.headless else mujoco.viewer.launch_passive(m, d)
+    with viewer_cm as viewer:
+        if viewer is not None:
+            viewer.cam.type = mujoco.mjtCamera.mjCAMERA_FREE
+            viewer.cam.azimuth = 135
+            viewer.cam.elevation = -20
+            viewer.cam.distance = 3.0
+            viewer.cam.lookat[:] = d.qpos[:3]
 
-        while viewer.is_running() and sim_time < simulation_duration:
+        while (viewer is None or viewer.is_running()) and sim_time < simulation_duration:
             step_start = time.time()
 
             if sim_time < startup_hold_s:
@@ -965,7 +973,8 @@ if __name__ == "__main__":
                     d.ctrl[ctrl_i] = ctrl_source[src_i]
 
             mujoco.mj_step(m, d)
-            viewer.cam.lookat[:] = d.qpos[:3]
+            if viewer is not None:
+                viewer.cam.lookat[:] = d.qpos[:3]
             sim_time += simulation_dt
 
             if counter % control_decimation == 0:
@@ -1051,7 +1060,8 @@ if __name__ == "__main__":
 
                 policy_tick += 1
 
-            update_custom_visualization(viewer, ee_cmd_plb_current)
+            if viewer is not None:
+                update_custom_visualization(viewer, ee_cmd_plb_current)
 
             if counter % 200 == 0:
                 current_leg_pos = d.qpos[7:7 + len(mujoco_joint_names)].copy()[leg_mujoco_indices]
@@ -1099,8 +1109,9 @@ if __name__ == "__main__":
                 )
 
             counter += 1
-            viewer.sync()
+            if viewer is not None:
+                viewer.sync()
 
-            time_until_next_step = simulation_dt - (time.time() - step_start)
-            if time_until_next_step > 0:
-                time.sleep(time_until_next_step)
+                time_until_next_step = simulation_dt - (time.time() - step_start)
+                if time_until_next_step > 0:
+                    time.sleep(time_until_next_step)

@@ -1,0 +1,49 @@
+# E1 -- Base velocity & EE pose tracking benchmark.
+#
+# Scientific objective: accurate SIMULTANEOUS base-velocity and EE-pose command
+# tracking. Compares C1, C3, C5 only.
+#
+#                     EE fixed target     EE random targets
+#   Base still             T1                    T2
+#   Base moving            T3                    T4
+#
+# The four conditions stay separate in every table and CSV.
+
+experiment: E1
+baselines: [C1, C3, C5]
+duration_s: 30.0          # per episode
+settle_s: null            # null -> inherit baselines.yaml (3.0)
+
+conditions:
+  T1: {base: still,  ee: fixed}
+  T2: {base: still,  ee: random}
+  T3: {base: moving, ee: fixed}
+  T4: {base: moving, ee: random}
+
+base:
+  # ROUND 3: base commands are resampled every 2-3 s (was 2-4 s in rounds 1-2),
+  # drawn from a seeded uniform distribution over [2.0, 3.0] s. Nothing else
+  # about the sampler changed: same RNG stream label, same unit-cube draw, same
+  # piecewise-constant hold, no smoothing or interpolation added.
+  segment_duration_range: [2.0, 3.0]
+  intensity: 1.0          # full shared supported training range
+  # limits inherited from baselines.yaml base_command_limits
+
+ee:
+  # Random targets: resampled EXACTLY every resample_interval_s, drawn from the native
+  # presampled reachable PLB keypoint table. No interpolation, ramp, smoothing
+  # or trajectory generation between consecutive targets -- the command is
+  # piecewise constant with hard switches, exactly as in training and in the
+  # validated Sim2Sim scripts (ee_command_mode: "direct").
+  #
+  # Training used ~8 s (ee_cycle_duration_s: 8.0). ROUND 3 uses 3.0 s (rounds
+  # 1-2 used 5.0 s) for a more demanding dynamic-target evaluation with
+  # IDENTICAL command semantics: the native sample-and-hold counter
+  # index = (k + 1) // cycle_steps is preserved unchanged, so the target is
+  # replaced instantaneously at the scheduled tick with no interpolation,
+  # ramp or smoothing. At 50 Hz, cycle_steps = 150 ticks = exactly 3.00 s.
+  resample_interval_s: 3.0
+  interpolation: none
+  # Fixed target: one reachable pose from the same table, held for the whole
+  # episode, fixed in the native PLB command frame (not the world frame).
+  # The arm is NOT frozen.

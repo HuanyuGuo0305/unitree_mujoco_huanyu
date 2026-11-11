@@ -1,0 +1,52 @@
+# E3 -- Dynamic whole-body coordination benchmark (primary experiment).
+# Compares C1, C3, C5 only.
+#
+# Full 3x3 intensity matrix:
+#                EE still    EE medium   EE fast
+#   Base still      S00         S01        S02
+#   Base medium     S10         S11        S12
+#   Base fast       S20         S21        S22
+
+experiment: E3
+baselines: [C1, C3, C5]
+duration_s: 20.0
+settle_s: null
+
+alpha_base: [0.0, 0.5, 1.0]
+alpha_ee: [0.0, 0.5, 1.0]
+
+base:
+  # Same seeded waveform at every intensity; alpha_base scales only the
+  # amplitude, so changing intensity changes nothing else.
+  segment_duration_range: [2.0, 4.0]
+  # Physical amplitude at alpha_base = 1.0 equals baselines.yaml
+  # base_command_limits = [0.6, 0.6, 0.6] (m/s, m/s, rad/s), i.e. the audited
+  # shared supported training range. Never exceeded.
+
+ee:
+  # Smooth geometric trajectories at controlled speed. NOT E1's discrete
+  # resampling -- there is no resampling mechanism in E3 at all.
+  families: [line, circle, semicircle]
+  center: [0.60, 0.00, 0.75]      # PLB metres; 1756 native command rows within 0.20 m
+  amplitude: 0.20                 # m, identical for all three families
+  speed_max: 0.40                 # m/s MEAN PATH SPEED at alpha_ee = 1.0
+  support_tolerance: 0.12         # m; max allowed distance to the nearest native command row
+  orientation_protocol: nearest_table_row_to_center   # held constant all episode
+  # alpha_ee = 0 -> stationary target at the path's t=0 point.
+  # Velocity is continuous everywhere, including the line/semicircle reversals.
+
+conditions_from_matrix: true
+
+degradation:
+  # Base -> EE : dE_ee(ab, ae) = E_ee(ab, ae) - E_ee(0,  ae)
+  # EE  -> Base: dE_b (ab, ae) = E_b (ab, ae) - E_b (ab, 0)
+  # Computed per matched seed AND per matched trajectory family before any
+  # aggregation. Absolute errors are always reported alongside.
+  paired: true
+  per_family: true
+
+plots:
+  # Panel A sweeps base intensity at this fixed nonzero EE speed.
+  panel_a_fixed_alpha_ee: 1.0
+  # Panel B sweeps EE speed at this fixed nonzero base intensity.
+  panel_b_fixed_alpha_base: 1.0

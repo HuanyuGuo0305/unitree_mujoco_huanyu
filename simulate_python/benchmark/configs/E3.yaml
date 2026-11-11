@@ -1,0 +1,63 @@
+# E3 v2 -- Dynamic whole-body coordination (canonical E3 protocol).
+# Supersedes v1 (3x3 alpha grid; frozen copy in configs/E3_v1.yaml and in
+# results/archive_e3_v1/configs/). Compares C1, C3, C5.
+#
+# 5 x 5 factorial: base-motion bound x EE cruise speed, crossed with three
+# fixed PLB-frame EE trajectory families.  5 x 5 x 3 = 75 conditions,
+# x 3 controllers x 200 seeds = 45,000 episodes.
+
+experiment: E3
+protocol_version: 2
+baselines: [C1, C3, C5]
+duration_s: 20.0
+settle_s: null                 # -> baselines.yaml settle_s = 3.0
+official_seeds: {start: 0, count: 200}
+
+base:
+  # Symmetric per-axis bound B: |vx| <= B m/s, |vy| <= B m/s, |wz| <= B rad/s,
+  # body frame. Existing seeded resampling protocol, unchanged: piecewise-
+  # constant segments of U(2, 4) s, each axis U(-1, 1) * B. The unit waveform
+  # depends only on the seed, so every level replays the same seeded pattern
+  # scaled to its bound. B = 0 is a stationary base. B <= the audited shared
+  # training range (baselines.yaml base_command_limits = 0.6 / 0.6 / 0.6).
+  levels: [0.00, 0.15, 0.30, 0.45, 0.60]
+  segment_duration_range: [2.0, 4.0]
+
+ee:
+  # Three fixed PLB-frame paths in the plane x = 0.60 m, sharing one start
+  # point P0 = center - amplitude * y_hat = [0.60, -0.20, 0.75]:
+  #   line        straight 0.40 m segment, back and forth
+  #   semicircle  upper half circle r = 0.20 m, back and forth
+  #   circle      full circle r = 0.20 m, one direction
+  # Arc-length parameterisation: cruise speed = the level speed for every
+  # family; half-cosine start / reversal ramps with peak tangential
+  # acceleration a_peak (velocity and acceleration continuous). Geometry and
+  # orientation are identical at every speed; only the timing changes.
+  # Speed 0 = hold P0 (the same fixed pose for every family).
+  families: [line, circle, semicircle]
+  center: [0.60, 0.00, 0.75]   # PLB m (v1 value)
+  amplitude: 0.20              # m (v1 value)
+  speed_levels_mps: [0.00, 0.05, 0.10, 0.15, 0.20]
+  a_peak_mps2: 1.0
+  support_tolerance: 0.12      # m, max distance of any path point to a native command row (v1 rule)
+  # Held EE orientation, constant all episode. PROTOCOL CHANGE vs v1: the v1 rule
+  # (row nearest the centre) leaves the upper-left arc of circle/semicircle
+  # kinematically unreachable. Replaced by native table row 10064, chosen by the
+  # pre-declared kinematics-only rule in benchmark/e3v2/select_orientation.py
+  # (results/E3_v2/protocol/orientation_selection.json); never by tracking results.
+  orientation_protocol: table_row
+  orientation_table_row: 10064
+  # PROTOCOL CHANGE vs v1: during the 3 s settling window the EE command is
+  # the trajectory start pose P0 (with the held orientation), not the
+  # measured initial EE pose, using the existing scenario settle hook (the
+  # mechanism E4 uses). In v1 the target jumped ~0.37 m and changed
+  # orientation by a large angle at t = 3 s, so every evaluation window began
+  # with the same large step response, which dominated EE RMSE and masked the
+  # speed effect E3 is meant to measure.
+  settle_hold: trajectory_start_pose
+
+degradation:
+  # Base -> EE : dE_ee(B, v) = E_ee(B, v) - E_ee(0, v)   same family, seed, controller
+  # EE  -> Base: dE_b (B, v) = E_b (B, v) - E_b (B, 0)   same family, seed, controller
+  paired: true
+  per_family: true

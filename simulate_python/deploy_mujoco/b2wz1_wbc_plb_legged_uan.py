@@ -29,6 +29,7 @@ import sys
 import time
 import argparse
 from collections import deque
+from contextlib import nullcontext
 
 import mujoco
 import mujoco.viewer
@@ -252,6 +253,11 @@ if __name__ == "__main__":
         default="full-policy",
         choices=["pd-stand", "lock-arm-policy", "full-policy"],
         help="Run mode",
+    )
+    parser.add_argument(
+        "--headless", action="store_true",
+        help="Run without the MuJoCo viewer and without wall-clock pacing. "
+             "Default off: the standalone interactive behaviour is unchanged.",
     )
     parser.add_argument(
         "--debug-wheel-frames", action="store_true",
@@ -1071,7 +1077,7 @@ if __name__ == "__main__":
         viewer.cam.distance = 3.0
         viewer.cam.lookat[:] = d.qpos[:3]
 
-        while viewer.is_running() and sim_time < simulation_duration:
+        while (viewer is None or viewer.is_running()) and sim_time < simulation_duration:
             step_start = time.time()
 
             if sim_time < startup_hold_s:
@@ -1108,7 +1114,8 @@ if __name__ == "__main__":
             d.ctrl[actuator_index_by_joint_name[gripper_joint_name]] = gripper_tau
 
             mujoco.mj_step(m, d)
-            viewer.cam.lookat[:] = d.qpos[:3]
+            if viewer is not None:
+                viewer.cam.lookat[:] = d.qpos[:3]
             sim_time += simulation_dt
 
             if counter % control_decimation == 0:
@@ -1189,7 +1196,8 @@ if __name__ == "__main__":
 
                 policy_tick += 1
 
-            update_custom_visualization(viewer, ee_cmd_plb_current)
+            if viewer is not None:
+                update_custom_visualization(viewer, ee_cmd_plb_current)
 
             if counter % 200 == 0:
                 current_leg_pos = get_qpos(leg_joint_names)
@@ -1236,8 +1244,9 @@ if __name__ == "__main__":
                 )
 
             counter += 1
-            viewer.sync()
+            if viewer is not None:
+                viewer.sync()
 
-            time_until_next_step = simulation_dt - (time.time() - step_start)
-            if time_until_next_step > 0:
-                time.sleep(time_until_next_step)
+                time_until_next_step = simulation_dt - (time.time() - step_start)
+                if time_until_next_step > 0:
+                    time.sleep(time_until_next_step)

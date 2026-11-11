@@ -140,53 +140,6 @@ CRITERIA = {
             },
         ],
     },
-    "E3": {
-        "rivals": ["C3", "C5"],
-        "pool_note": (
-            "Each E3 criterion names the intensity cell it must come from, chosen "
-            "for what the cell means, not for which seed wins in it."
-        ),
-        "cases": [
-            {
-                "name": "case1_high_speed_ee_tracking",
-                "cell": "S02",
-                "intent": (
-                    "Fastest EE trajectory with the base still (alpha_ee = 1, "
-                    "alpha_base = 0): strong C1 dynamic EE position tracking, "
-                    "isolated from any locomotion effect."
-                ),
-                "terms": [("ee_position_rmse_m", 1.0)],
-                "combine": "mean",
-                "require_positive": ["ee_position_rmse_m"],
-            },
-            {
-                "name": "case2_combined_motion_base_tracking",
-                "cell": "S22",
-                "intent": (
-                    "Both subsystems at full intensity: lower C1 base XY velocity "
-                    "tracking error while the arm is also moving at full speed."
-                ),
-                "terms": [("base_vxy_rmse_mps", 1.0)],
-                "combine": "mean",
-                "require_positive": ["base_vxy_rmse_mps"],
-            },
-            {
-                "name": "case3_reduced_coupling",
-                "cell": "S22",
-                "intent": (
-                    "Reduced locomotion-manipulation coupling: C1 shows a smaller "
-                    "locomotion-induced EE error increase AND a smaller "
-                    "manipulation-induced base error increase than both rivals, in "
-                    "the same trial."
-                ),
-                "terms": [("locomotion_induced_ee", 1.0),
-                          ("manipulation_induced_base", 1.0)],
-                "combine": "min",
-                "require_positive": ["locomotion_induced_ee",
-                                     "manipulation_induced_base"],
-            },
-        ],
-    },
 }
 
 # Nontriviality gate. A figure of a trial in which nothing was commanded to
@@ -203,8 +156,6 @@ NONTRIVIAL = {
     "E1": {"min_base_segments": 8, "min_ee_switches": 8,
            "min_rms_fraction_of_condition_median": 0.70},
     "E2": {"min_base_segments": 6, "min_ee_switches": 0,
-           "min_rms_fraction_of_condition_median": 0.70},
-    "E3": {"min_base_segments": 0, "min_ee_switches": 0,
            "min_rms_fraction_of_condition_median": 0.70},
 }
 
@@ -347,23 +298,13 @@ def select_experiment(experiment, out_dir, showcase_dir) -> dict:
         r["seed"] = int(r["seed"])
         r["survived"] = int(r["survived"])
 
-    deg_index: dict = {}
-    if experiment == "E3":
-        deg = common.read_csv(os.path.join(out_dir, "per_seed_degradation.csv"))
-        for r in deg:
-            key = (r["baseline"], r["trajectory_family"], int(r["seed"]), r["condition"])
-            deg_index.setdefault(key, {})[r["degradation_type"]] = float(r["degradation"])
-
     ranking_rows, selected, unsatisfied = [], [], []
     used_seeds: set = set()
 
     for case in spec["cases"]:
         cell = case.get("cell")
         condition = case.get("condition", spec.get("condition"))
-        if experiment == "E3":
-            groups = sorted({r["trajectory_family"] for r in rows})
-        else:
-            groups = [None]
+        groups = [None]
 
         metrics_for_scale = sorted({m for m, _ in case["terms"]}
                                    | set(case.get("require_negative", [])))
@@ -376,32 +317,16 @@ def select_experiment(experiment, out_dir, showcase_dir) -> dict:
         candidates = []
         for family in groups:
             def keep(r, cell=cell, condition=condition, family=family):
-                if experiment == "E3":
-                    return r["condition"].startswith(cell + "_") and \
-                        r["trajectory_family"] == family
                 return r["condition"] == condition
             by_seed, scale, motion = _build_candidates(
                 experiment, rows, keep, metrics_for_scale, rivals,
-                need_motion=(experiment != "E3"),
+                need_motion=True,
             )
             for seed, per_baseline in sorted(by_seed.items()):
                 if "C1" not in per_baseline:
                     continue
                 pb = {k: {kk: (float(vv) if _isnum(vv) else vv) for kk, vv in v.items()}
                       for k, v in per_baseline.items()}
-                if experiment == "E3":
-                    cond_id = per_baseline["C1"]["condition"]
-                    for name, row in pb.items():
-                        d = deg_index.get((name, family, seed, cond_id), {})
-                        row["locomotion_induced_ee"] = d.get(
-                            "locomotion_induced_ee", float("nan"))
-                        row["manipulation_induced_base"] = d.get(
-                            "manipulation_induced_base", float("nan"))
-                    for metric, _w in case["terms"]:
-                        if metric.startswith(("locomotion_induced", "manipulation_induced")):
-                            vals = [abs(r[metric]) for r in pb.values()
-                                    if np.isfinite(r[metric])]
-                            scale.setdefault(metric, float(np.median(vals)) if vals else float("nan"))
                 score, terms = _score(case, pb, rivals, scale)
                 gates = _gates(case, pb, rivals, motion.get(seed), scale,
                                NONTRIVIAL[experiment], terms)
@@ -542,9 +467,6 @@ REPORT_METRICS = {
            "leg_power_w", "arm_power_w", "wheel_power_w",
            "leg_acc_rms_radps2", "arm_acc_rms_radps2",
            "ee_position_rmse_m", "ee_orientation_mae_deg", "valid_evaluation_time_s"],
-    "E3": ["ee_position_rmse_m", "base_vxy_rmse_mps", "base_yaw_rmse_radps",
-           "ee_orientation_mae_deg", "locomotion_induced_ee",
-           "manipulation_induced_base", "valid_evaluation_time_s"],
 }
 
 
@@ -623,7 +545,7 @@ def _flat(rec) -> dict:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--experiments", default="E1,E2,E3")
+    parser.add_argument("--experiments", default="E1,E2")
     parser.add_argument("--out", default=common.OUT)
     args = parser.parse_args(argv)
     showcase = os.path.join(args.out, "showcase")

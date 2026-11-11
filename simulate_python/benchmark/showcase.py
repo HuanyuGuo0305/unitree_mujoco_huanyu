@@ -14,7 +14,7 @@ Every selection records the candidate pool, the criterion, and the metric values
 for every compared baseline, so a reader can see exactly why a figure's seed was
 chosen. Nothing here feeds the aggregate statistics.
 
-    python3 benchmark/showcase.py --experiment E3 --baselines C1,C3,C5
+    python3 benchmark/showcase.py --experiment E1 --baselines C1,C3,C5
     python3 benchmark/showcase.py --experiment E1 --criterion representative
 """
 
@@ -41,7 +41,6 @@ RESULTS_ROOT = os.path.join(SIM_ROOT, "benchmark", "results")
 PRIMARY_METRIC = {
     "E1": "ee_pos_rmse",
     "E2": "base_vxy_rmse",
-    "E3": "ee_pos_rmse",
     "E4": "ee_world_pos_rmse",
 }
 CONTRAST_CRITERIA = (
@@ -172,7 +171,7 @@ def high_contrast_seeds(rows, reference, others, criterion, top_k=3,
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--experiment", required=True, choices=["E1", "E2", "E3", "E4"])
+    parser.add_argument("--experiment", required=True, choices=["E1", "E2", "E4"])
     parser.add_argument("--results", default=os.path.join(RESULTS_ROOT, "raw"))
     parser.add_argument("--baselines", default="C1,C3,C5")
     parser.add_argument("--reference", default="C1")
@@ -196,26 +195,6 @@ def main(argv=None):
     if not rows:
         print(f"No {args.experiment} episodes under {args.results} for {baselines}")
         return 1
-
-    # Degradation is computed on the FULL set, before any condition filter: the
-    # alpha_base = 0 and alpha_ee = 0 references live in other conditions, so
-    # filtering first would silently drop both degradation metrics.
-    if args.experiment == "E3":
-        _, stats_cfg = E.load_config("E3")
-        degradation = aggregate.e3_degradation(rows, stats_cfg["statistics"])
-        deg_index = {
-            (r["baseline"], r["ee_family"], r["seed"], r["alpha_base"], r["alpha_ee"]): r
-            for r in degradation
-        }
-        for row in rows:
-            key = (row["baseline"], row.get("ee_family"), row["seed"],
-                   row.get("alpha_base"), row.get("alpha_ee"))
-            extra = deg_index.get(key)
-            if extra:
-                for metric in ("delta_ee_pos_rmse_from_base",
-                               "delta_base_vxy_rmse_from_ee"):
-                    if metric in extra:
-                        row[metric] = extra[metric]
 
     if args.conditions:
         wanted = {c.strip() for c in args.conditions.split(",")}

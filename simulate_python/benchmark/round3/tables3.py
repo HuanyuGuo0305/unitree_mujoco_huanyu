@@ -318,65 +318,6 @@ def e2_tables(out_dir, tables_dir, name="E2_official_50seeds"):
 
 
 # ==========================================================================
-# E3 paired-advantage table
-# ==========================================================================
-def e3_paired_table(out_dir, tables_dir, name="E3_paired_advantage_50seeds"):
-    paired = common.read_csv(os.path.join(out_dir, "paired_comparisons.csv"))
-    pooled = [r for r in paired if r["trajectory_family"] == "all(pooled)"]
-    abs_rows = {(r["condition"], r["rival"], r["metric"]): r
-                for r in pooled if not r["degradation_type"]}
-    deg_rows = {(r["condition"], r["rival"], r["degradation_type"]): r
-                for r in pooled if r["degradation_type"]}
-    cells = ["S00", "S01", "S02", "S10", "S11", "S12", "S20", "S21", "S22"]
-
-    lines = [
-        r"\begin{table*}[t]", r"\centering",
-        r"\caption{E3 paired advantages over the $3\times3$ intensity matrix, "
-        r"pooled over the three trajectory families by a cluster bootstrap over "
-        r"seeds (the three families at one seed share that seed's initial state, "
-        r"so they are averaged within the seed before resampling). "
-        r"Entries are rival$-$C1 means over 50 paired seeds, so a POSITIVE "
-        r"value means C1 had the lower error; $^{*}$ marks a 95\% CI excluding "
-        r"zero. $A_{p}$ EE position RMSE (m), $A_{v}$ base XY velocity RMSE "
-        r"(m/s), $A_{R}$ EE orientation MAE (deg), $A_{\Delta p}$ "
-        r"locomotion-induced EE degradation (m), $A_{\Delta v}$ "
-        r"manipulation-induced base degradation (m/s). Cell $S_{ij}$ has "
-        r"$\alpha_{base}$ at level $i$ and $\alpha_{ee}$ at level $j$ "
-        r"($0$, $0.5$, $1$). Per-seed values: "
-        r"\texttt{final\_round3/E3/per\_seed.csv} and "
-        r"\texttt{per\_seed\_degradation.csv}.}",
-        r"\label{tab:e3-round3-paired}",
-        r"\begin{tabular}{@{}ll" + "r" * len(cells) + r"@{}}", r"\toprule",
-        r"Rival & Quantity & " + " & ".join(cells) + r" \\",
-        r"\midrule",
-    ]
-    spec = [
-        ("ee_position_rmse_m", r"$A_{p}$", 4, "abs"),
-        ("base_vxy_rmse_mps", r"$A_{v}$", 4, "abs"),
-        ("ee_orientation_mae_deg", r"$A_{R}$", 2, "abs"),
-        ("locomotion_induced_ee", r"$A_{\Delta p}$", 4, "deg"),
-        ("manipulation_induced_base", r"$A_{\Delta v}$", 4, "deg"),
-    ]
-    for rival in ("C3", "C5"):
-        lines.append(rf"\multirow{{{len(spec)}}}{{*}}{{{rival}$-$C1}}")
-        for i, (key, head, digits, kind) in enumerate(spec):
-            row_cells = []
-            for cell in cells:
-                src = abs_rows if kind == "abs" else deg_rows
-                r = src.get((cell, rival, key))
-                row_cells.append("--" if r is None
-                                 else _signed(r["mean_difference"], digits,
-                                              int(r["significant"])))
-            prefix = "" if i else ""
-            lines.append(f"{prefix} & {head} & " + " & ".join(row_cells) + r" \\")
-        lines.append(r"\addlinespace")
-    lines += [r"\bottomrule", r"\end{tabular}", r"\end{table*}"]
-    path = os.path.join(tables_dir, name + ".tex")
-    common.write_text(path, "\n".join(lines) + "\n")
-    return [path]
-
-
-# ==========================================================================
 # Selected illustrative cases
 # ==========================================================================
 SELECTED_SPEC = {
@@ -391,12 +332,6 @@ SELECTED_SPEC = {
             ("total_power_w", r"$P_{\mathrm{tot}}$ (W)", 1),
             ("leg_power_w", r"$P_{\mathrm{leg}}$ (W)", 1),
             ("leg_acc_rms_radps2", r"$a_{\mathrm{leg}}$ (rad/s$^2$)", 1)]),
-    "E3": (["C1", "C3", "C5"],
-           [("ee_position_rmse_m", r"$E_p$ (m)", 4),
-            ("base_vxy_rmse_mps", r"$E_v$ (m/s)", 4),
-            ("ee_orientation_mae_deg", r"$E_R$ (deg)", 2),
-            ("locomotion_induced_ee", r"$\Delta E_p$ (m)", 4),
-            ("manipulation_induced_base", r"$\Delta E_v$ (m/s)", 4)]),
 }
 
 
@@ -429,9 +364,7 @@ def selected_table(experiment, out_dir, tables_dir):
     for row in rows:
         header = (row["case"].replace("_", r"\_") + r", seed "
                   + str(row["selected_seed"]))
-        # E3 condition IDs contain an underscore (S02_circle), which is a
-        # compile error outside math mode. The structural checker cannot see
-        # this, so it is escaped at the source.
+        # Underscores are a compile error outside math mode; escaped at the source.
         cond = row["condition"].replace("_", r"\_")
         rank = (f"rank {row['rank_among_eligible']}/{row['n_eligible']} eligible "
                 f"of {row['n_candidates']}")
@@ -469,8 +402,7 @@ def main(argv=None) -> int:
     written = []
     written += e1_tables(os.path.join(args.out, "E1"), tables_dir)
     written += e2_tables(os.path.join(args.out, "E2"), tables_dir)
-    written += e3_paired_table(os.path.join(args.out, "E3"), tables_dir)
-    for experiment in ("E1", "E2", "E3"):
+    for experiment in ("E1", "E2"):
         written += selected_table(experiment, os.path.join(args.out, experiment),
                                   tables_dir)
     for path in written:

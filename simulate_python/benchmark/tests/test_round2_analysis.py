@@ -22,36 +22,12 @@ for root in (REPO_ROOT, SIM_ROOT):
     if root not in sys.path:
         sys.path.insert(0, root)
 
-from benchmark import analysis, select_cases  # noqa: E402
+from benchmark import select_cases  # noqa: E402
 from benchmark.core import stats  # noqa: E402
 from benchmark.plots import figures_round2 as figs  # noqa: E402
 from benchmark.scenarios import experiments as E  # noqa: E402
 
 CFG_STATS = {"bootstrap_resamples": 2000, "bootstrap_seed": 11, "confidence": 0.95}
-
-
-def _e3_rows(c1_ee, c3_ee, c1_base, c3_base, n_seeds=20,
-             families=("line", "circle", "semicircle")):
-    """Synthetic E3 rows with a known per-seed structure."""
-    rows = []
-    rng = np.random.default_rng(0)
-    for family in families:
-        for seed in range(n_seeds):
-            jitter = float(rng.normal(0.0, 1e-4))
-            for ab in (0.0, 0.5, 1.0):
-                for ae in (0.0, 0.5, 1.0):
-                    for baseline, ee, base in (("C1", c1_ee, c1_base),
-                                               ("C3", c3_ee, c3_base)):
-                        rows.append({
-                            "experiment": "E3", "baseline": baseline, "seed": seed,
-                            "ee_family": family, "alpha_base": ab, "alpha_ee": ae,
-                            "condition": f"S{int(ab*2)}{int(ae*2)}_{family}",
-                            "survived": 1, "termination_reason": "completed",
-                            "ee_pos_rmse": ee + 0.01 * ab + jitter,
-                            "base_vxy_rmse": base + 0.02 * ae + jitter,
-                            "ee_ori_mae_deg": 10.0, "base_wz_rmse": 0.05,
-                        })
-    return rows
 
 
 # ==========================================================================
@@ -101,91 +77,6 @@ class TestPairedAdvantage(unittest.TestCase):
         res = stats.paired_advantage(ref, dict(ref), n_resamples=500, seed=1)
         self.assertFalse(res["significant"])
         self.assertEqual(res["mean"], 0.0)
-
-
-class TestAnalysisTable(unittest.TestCase):
-    def test_advantage_sign_matches_definition(self):
-        rows = _e3_rows(c1_ee=0.10, c3_ee=0.13, c1_base=0.08, c3_base=0.09)
-        table = analysis.paired_advantage_table(rows, "C1", "C3", CFG_STATS)
-        ee = [r for r in table if r["quantity"] == "A_EE" and r["cell"] == "S22"
-              and not r["pooled_over_families"]]
-        self.assertTrue(ee)
-        for row in ee:
-            self.assertAlmostEqual(row["mean_advantage"], 0.03, places=3)
-            self.assertEqual(row["favours"], "C1")
-            self.assertEqual(row["advantage_definition"],
-                             "C3_ee_pos_rmse - C1_ee_pos_rmse")
-
-    def test_rival_better_is_reported_as_such(self):
-        rows = _e3_rows(c1_ee=0.15, c3_ee=0.10, c1_base=0.08, c3_base=0.09)
-        table = analysis.paired_advantage_table(rows, "C1", "C3", CFG_STATS)
-        ee = [r for r in table if r["quantity"] == "A_EE" and r["cell"] == "S11"][0]
-        self.assertLess(ee["mean_advantage"], 0.0)
-        self.assertEqual(ee["favours"], "C3")
-
-    def test_pooled_rows_have_three_times_the_pairs(self):
-        rows = _e3_rows(c1_ee=0.10, c3_ee=0.13, c1_base=0.08, c3_base=0.09, n_seeds=12)
-        table = analysis.paired_advantage_table(rows, "C1", "C3", CFG_STATS)
-        per_family = [r for r in table if r["quantity"] == "A_EE"
-                      and r["cell"] == "S22" and r["ee_family"] == "line"][0]
-        pooled = [r for r in table if r["quantity"] == "A_EE"
-                  and r["cell"] == "S22" and r["pooled_over_families"]][0]
-        self.assertEqual(per_family["n_pairs"], 12)
-        self.assertEqual(pooled["n_pairs"], 36)
-        self.assertTrue(pooled["pooled_over_families"])
-
-    def test_degradation_quantities_are_present_and_signed(self):
-        # c1_ee has +0.01*alpha_base baked in, so BOTH methods degrade by the
-        # same +0.01 and the advantage must be ~0, not the absolute gap.
-        rows = _e3_rows(c1_ee=0.10, c3_ee=0.13, c1_base=0.08, c3_base=0.09)
-        # load_e3 reads from disk, so the degradation merge is exercised here
-        # through the same helper it calls.
-        from benchmark import aggregate
-        degradation = aggregate.e3_degradation(rows, None)
-        index = {(r["baseline"], r["ee_family"], r["seed"],
-                  r["alpha_base"], r["alpha_ee"]): r for r in degradation}
-        for row in rows:
-            extra = index.get((row["baseline"], row["ee_family"], row["seed"],
-                               row["alpha_base"], row["alpha_ee"]))
-            if extra and "delta_ee_pos_rmse_from_base" in extra:
-                row["delta_ee_pos_rmse_from_base"] = extra["delta_ee_pos_rmse_from_base"]
-                row["delta_base_vxy_rmse_from_ee"] = extra["delta_base_vxy_rmse_from_ee"]
-        table = analysis.paired_advantage_table(rows, "C1", "C3", CFG_STATS)
-        deg = [r for r in table if r["quantity"] == "A_Delta_EE"
-               and r["cell"] == "S22" and r["ee_family"] == "line"]
-        self.assertTrue(deg)
-        self.assertAlmostEqual(deg[0]["mean_advantage"], 0.0, places=6)
-
-    def test_absolute_table_covers_the_full_matrix(self):
-        rows = _e3_rows(c1_ee=0.10, c3_ee=0.13, c1_base=0.08, c3_base=0.09, n_seeds=5)
-        table = analysis.absolute_tracking_table(rows, CFG_STATS)
-        self.assertEqual(len(table), 3 * 9 * 2)   # families x cells x baselines
-        demanding = {r["cell"] for r in table if r["demanding_cell"]}
-        self.assertEqual(demanding, {"S11", "S12", "S21", "S22"})
-
-
-class TestFigureSeriesHelpers(unittest.TestCase):
-    def test_family_pooling_averages_before_bootstrapping(self):
-        rows = _e3_rows(c1_ee=0.10, c3_ee=0.13, c1_base=0.08, c3_base=0.09, n_seeds=8)
-        subset = figs._cell_rows(rows, ab=1.0, ae=1.0, baseline="C1")
-        per_seed = figs._per_seed_pooled(subset, "ee_pos_rmse")
-        # One value per seed, not one per episode.
-        self.assertEqual(len(per_seed), 8)
-        self.assertEqual(len(subset), 8 * 3)
-
-    def test_paired_series_differences_before_pooling(self):
-        rows = _e3_rows(c1_ee=0.10, c3_ee=0.13, c1_base=0.08, c3_base=0.09, n_seeds=8)
-        mean, lo, hi, n, sig = figs._paired_series_pooled(
-            rows, "C1", "C3", "ee_pos_rmse", "ab", [1.0], {"ae": 1.0}, CFG_STATS)
-        self.assertEqual(int(n[0]), 8)
-        self.assertAlmostEqual(float(mean[0]), 0.03, places=3)
-        self.assertTrue(sig[0])
-
-    def test_cell_filter_is_numeric_safe(self):
-        rows = _e3_rows(c1_ee=0.1, c3_ee=0.1, c1_base=0.1, c3_base=0.1, n_seeds=2)
-        for row in rows:
-            row["alpha_base"] = str(row["alpha_base"])
-        self.assertEqual(len(figs._cell_rows(rows, ab=0.5, ae=0.5, baseline="C1")), 6)
 
 
 class TestPowerReconstruction(unittest.TestCase):

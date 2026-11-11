@@ -10,8 +10,6 @@ Outputs (under ``benchmark/results``):
     tables/E1_tracking_summary.csv    per (condition, baseline) statistics
     tables/E1_tracking_compact.tex    the four-panel IEEE table
     tables/E2_wheel_actuation.{tex,csv}
-    tables/E3_all_metrics.csv
-    tables/E3_degradation.csv
     tables/E4_stabilization.csv
     summary/<EXP>_paired_differences.csv
 """
@@ -231,59 +229,11 @@ E2_METRICS = [
     "base_vxy_rmse", "base_wz_rmse", "total_power", "leg_power", "arm_power",
     "wheel_power", "leg_acc_rms", "arm_acc_rms", "survived",
 ]
-E3_METRICS = ["base_vxy_rmse", "base_wz_rmse", "ee_pos_rmse", "ee_ori_mae_deg", "survived"]
 E4_METRICS = [
     "ee_world_pos_rmse", "ee_world_pos_mae", "ee_world_pos_max",
     "ee_world_ori_mae_deg", "ee_world_ori_max_deg",
     "base_vxy_rmse", "base_wz_rmse", "survived",
 ]
-
-
-def e3_degradation(rows, cfg_stats) -> list[dict]:
-    """Paired coordination degradation, per baseline / family / seed.
-
-    Base -> EE : dE_ee(ab, ae) = E_ee(ab, ae) - E_ee(0,  ae)
-    EE  -> Base: dE_b (ab, ae) = E_b (ab, ae) - E_b (ab, 0)
-
-    Baselines are matched on (seed, trajectory family) before differencing, and
-    the absolute errors are reported alongside so a controller with a large
-    baseline error cannot look good merely by degrading less.
-    """
-    index = {}
-    for row in rows:
-        if "alpha_base" not in row or "alpha_ee" not in row:
-            continue
-        index[(row["baseline"], row["ee_family"], row["seed"],
-               float(row["alpha_base"]), float(row["alpha_ee"]))] = row
-
-    out = []
-    for key, row in sorted(index.items(), key=lambda kv: tuple(map(str, kv[0]))):
-        baseline, family, seed, ab, ae = key
-        ref_ee = index.get((baseline, family, seed, 0.0, ae))
-        ref_base = index.get((baseline, family, seed, ab, 0.0))
-        record = {
-            "experiment": "E3", "baseline": baseline, "ee_family": family, "seed": seed,
-            "alpha_base": ab, "alpha_ee": ae,
-            "ee_pos_rmse": row.get("ee_pos_rmse"),
-            "base_vxy_rmse": row.get("base_vxy_rmse"),
-            "base_wz_rmse": row.get("base_wz_rmse"),
-            "ee_ori_mae_deg": row.get("ee_ori_mae_deg"),
-            "survived": row.get("survived"),
-        }
-        if ref_ee is not None and "ee_pos_rmse" in row:
-            record["delta_ee_pos_rmse_from_base"] = row["ee_pos_rmse"] - ref_ee["ee_pos_rmse"]
-            record["delta_ee_ori_mae_from_base"] = (
-                row["ee_ori_mae_deg"] - ref_ee["ee_ori_mae_deg"]
-            )
-        if ref_base is not None and "base_vxy_rmse" in row:
-            record["delta_base_vxy_rmse_from_ee"] = (
-                row["base_vxy_rmse"] - ref_base["base_vxy_rmse"]
-            )
-            record["delta_base_wz_rmse_from_ee"] = (
-                row["base_wz_rmse"] - ref_base["base_wz_rmse"]
-            )
-        out.append(record)
-    return out
 
 
 # --------------------------------------------------------------------------
@@ -367,37 +317,6 @@ def main(argv=None):
                     primary_condition=exp_cfg["primary_table_condition"],
                 )
             _print_summary(summary, E2_METRICS[:6], ["condition", "baseline"])
-
-        elif experiment == "E3":
-            write_csv(os.path.join(tables_dir, "E3_all_metrics.csv"), official)
-            summary = summarize_groups(
-                official, E3_METRICS,
-                ["ee_family", "alpha_base", "alpha_ee", "baseline"], cfg_stats,
-            )
-            write_csv(os.path.join(tables_dir, "E3_summary.csv"), summary)
-            degradation = e3_degradation(official, cfg_stats)
-            write_csv(os.path.join(tables_dir, "E3_degradation.csv"), degradation)
-            deg_metrics = [
-                "delta_ee_pos_rmse_from_base", "delta_base_vxy_rmse_from_ee",
-                "ee_pos_rmse", "base_vxy_rmse",
-            ]
-            deg_summary = summarize_groups(
-                [r for r in degradation if "delta_ee_pos_rmse_from_base" in r
-                 or "delta_base_vxy_rmse_from_ee" in r],
-                deg_metrics, ["ee_family", "alpha_base", "alpha_ee", "baseline"], cfg_stats,
-            )
-            write_csv(os.path.join(tables_dir, "E3_degradation_summary.csv"), deg_summary)
-            pairs = paired_table(
-                official, E3_METRICS, ["ee_family", "alpha_base", "alpha_ee"],
-                ["C1", "C3", "C5"], cfg_stats,
-            )
-            write_csv(os.path.join(summary_dir, "E3_paired_differences.csv"), pairs)
-            if args.tables:
-                table_gen.e3_matrix_table(summary, tables_dir)
-            _print_summary(
-                summary, ["ee_pos_rmse", "base_vxy_rmse"],
-                ["ee_family", "alpha_base", "alpha_ee", "baseline"], limit=40,
-            )
 
         elif experiment == "E4":
             write_csv(os.path.join(tables_dir, "E4_stabilization_all.csv"), official)

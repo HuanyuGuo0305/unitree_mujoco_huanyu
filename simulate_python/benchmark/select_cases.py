@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Illustrative-case selection for E1, E2 and E3 figures.
+"""Illustrative-case selection for E1 and E2 figures.
 
 This is NOT part of the quantitative evaluation. The official statistics use
 every seed in the official pool (0-59) with no exclusions; this utility picks
@@ -17,8 +17,6 @@ mechanically:
       episode must contain several base-command segments, must actually
       command motion, and (E1 T4) must switch the EE target inside the
       evaluation window;
-   G4 (E3 only) the two degradation reference cells for this cell also
-      completed for every baseline, so the trial's coupling numbers are valid.
 2. **Scale** per metric: the median, over the gated candidates, of the mean of
    that metric across the compared baselines. A scale, taken from the pool
    itself, so the three metrics are comparable; it is not a result.
@@ -34,7 +32,7 @@ If a criterion has no candidate that satisfies it, that is reported as
 ``selected: null`` with the reason -- never back-filled with a weaker case.
 
     python3 benchmark/select_cases.py --experiment E1
-    python3 benchmark/select_cases.py --experiment E2 --experiment E3
+    python3 benchmark/select_cases.py --experiment E1 --experiment E2
 """
 
 from __future__ import annotations
@@ -54,7 +52,6 @@ for root in (REPO_ROOT, SIM_ROOT):
         sys.path.insert(0, root)
 
 from benchmark import aggregate  # noqa: E402
-from benchmark import analysis  # noqa: E402
 from benchmark.scenarios import experiments as E  # noqa: E402
 
 RESULTS_ROOT = os.path.join(SIM_ROOT, "benchmark", "results")
@@ -152,61 +149,6 @@ CRITERIA = {
             },
         ],
     },
-    "E3": {
-        # Candidate cells per case; the degradation reference cells are gated
-        # on but never scored.
-        "conditions": ["S12", "S21", "S22"],
-        "primary_condition_rationale": (
-            "S12, S21 and S22 are the combined-motion cells: both subsystems "
-            "move, at least one at full intensity. S00-S02/S10/S20 are run in "
-            "the candidate pool only as the degradation reference cells."
-        ),
-        "compared": ["C1", "C3", "C5"],
-        "scored_rivals": ["C3"],
-        "report_metrics": ["ee_pos_rmse", "ee_ori_mae_deg", "base_vxy_rmse",
-                           "base_wz_rmse", "delta_ee_pos_rmse_from_base",
-                           "delta_base_vxy_rmse_from_ee"],
-        "cases": [
-            {
-                "id": "case1_ee_tracking_during_base_motion",
-                "title": "C1 vs C3: EE tracking during base motion",
-                "intent": "Largest C1 advantage in absolute EE position RMSE "
-                          "while the base is moving and the EE target is fast.",
-                "score": "mean",
-                "metrics": ["ee_pos_rmse"],
-                "require_positive": [],
-                "cells": ["S12", "S22"],
-            },
-            {
-                "id": "case2_base_tracking_during_ee_motion",
-                "title": "C1 vs C3: base tracking during EE motion",
-                "intent": "Largest C1 advantage in absolute base XY velocity "
-                          "RMSE while the EE is being driven along its path.",
-                "score": "mean",
-                "metrics": ["base_vxy_rmse"],
-                "require_positive": [],
-                "cells": ["S12", "S21", "S22"],
-            },
-            {
-                "id": "case3_combined_coordination",
-                "title": "C1 vs C3: combined-motion coordination",
-                "intent": "Both subsystems at full intensity, C1 ahead on EE "
-                          "position and base velocity simultaneously -- the "
-                          "case worth drawing the trajectory for.",
-                "score": "min",
-                "metrics": ["ee_pos_rmse", "base_vxy_rmse"],
-                "require_positive": [],
-                "cells": ["S22"],
-            },
-        ],
-    },
-}
-
-# E3 degradation reference cells: cell -> (base->EE reference, EE->base reference)
-E3_REFERENCE_CELLS = {
-    "S12": ("S02", "S10"),
-    "S21": ("S01", "S20"),
-    "S22": ("S02", "S20"),
 }
 
 # G3 nontriviality thresholds, pre-declared.
@@ -280,12 +222,7 @@ def _index_by_seed_cond(rows):
 def build_candidates(experiment, raw_root, pool, spec, limits, global_cfg):
     """Gate the candidate pool and return (candidates, gate_log)."""
     rows = aggregate.load_raw(raw_root, [experiment])
-    if experiment == "E3":
-        rows = analysis.load_e3(raw_root, pool["start"], pool["count"])
-        for row in rows:
-            row["cell"] = analysis._cell(row)
-    else:
-        rows = aggregate.filter_official(rows, pool["start"], pool["count"])
+    rows = aggregate.filter_official(rows, pool["start"], pool["count"])
 
     official = global_cfg["official_seeds"]
     overlap = set(range(pool["start"], pool["start"] + pool["count"])) & set(
@@ -301,51 +238,6 @@ def build_candidates(experiment, raw_root, pool, spec, limits, global_cfg):
     compared = spec["compared"]
     gate_log = []
     candidates = []
-
-    if experiment == "E3":
-        groups: dict = {}
-        for row in rows:
-            groups.setdefault((row["cell"], row["ee_family"], row["seed"]), {})[
-                row["baseline"]] = row
-        wanted_cells = sorted({c for case in spec["cases"] for c in case["cells"]})
-        for (cell, family, seed), per_baseline in sorted(groups.items()):
-            if cell not in wanted_cells:
-                continue
-            entry = {"experiment": experiment, "condition": f"{cell}_{family}",
-                     "cell": cell, "ee_family": family, "seed": int(seed)}
-            reasons = []
-            if not all(b in per_baseline for b in compared):
-                reasons.append("G1: a compared baseline is missing")
-            elif not all(int(per_baseline[b]["survived"]) for b in compared):
-                reasons.append("G1: a compared baseline terminated early")
-            ref_ee, ref_base = E3_REFERENCE_CELLS[cell]
-            for ref in (ref_ee, ref_base):
-                ref_group = groups.get((ref, family, seed), {})
-                if not all(b in ref_group and int(ref_group[b]["survived"])
-                           for b in compared):
-                    reasons.append(f"G4: degradation reference cell {ref} incomplete")
-            metrics_needed = sorted({m for case in spec["cases"] for m in
-                                     case["metrics"] + case["require_positive"]})
-            if all(b in per_baseline for b in compared):
-                for metric in metrics_needed:
-                    if not all(np.isfinite(per_baseline[b].get(metric, np.nan))
-                               for b in compared):
-                        reasons.append(f"G2: {metric} not finite")
-            entry["gated_out"] = reasons
-            entry["commands"] = {"deterministic_trajectory": True,
-                                 "note": "E3 commands are deterministic by "
-                                         "construction; G3 does not apply"}
-            if all(b in per_baseline for b in compared):
-                entry["metrics"] = {
-                    b: {m: per_baseline[b].get(m) for m in spec["report_metrics"]}
-                    for b in compared
-                }
-                entry["survived"] = {b: int(per_baseline[b]["survived"]) for b in compared}
-                entry["paths"] = {b: per_baseline[b]["path"] for b in compared}
-            gate_log.append(entry)
-            if not reasons:
-                candidates.append(entry)
-        return candidates, gate_log
 
     thresholds = NONTRIVIAL[experiment]
     index = _index_by_seed_cond(rows)
@@ -556,7 +448,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--experiment", action="append", required=True,
-                        choices=["E1", "E2", "E3"])
+                        choices=["E1", "E2"])
     parser.add_argument("--results", default=os.path.join(RESULTS_ROOT, "raw"))
     parser.add_argument("--out", default=RESULTS_ROOT)
     args = parser.parse_args(argv)
@@ -608,8 +500,7 @@ def main(argv=None):
                     "G1": "every compared baseline completed the episode",
                     "G2": "every scored metric finite for every baseline",
                     "G3": NONTRIVIAL.get(experiment, "not applicable (deterministic commands)"),
-                    "G4": ("degradation reference cells complete for every baseline"
-                           if experiment == "E3" else "not applicable"),
+                    "G4": "not applicable",
                 },
                 "margin": "min over scored rivals of (rival - C1), per metric",
                 "normalisation_scale": "median over gated candidates of the "
@@ -658,10 +549,8 @@ def main(argv=None):
                 row.update({m: sel["metrics"][baseline].get(m)
                             for m in spec["report_metrics"]})
                 flat.append(row)
-        csv_dir = (os.path.join(args.out, "showcase") if experiment == "E3"
-                   else os.path.join(args.out, "tables"))
-        csv_name = ("E3_selected_3seeds.csv" if experiment == "E3"
-                    else f"{experiment}_selected_3seeds.csv")
+        csv_dir = os.path.join(args.out, "tables")
+        csv_name = f"{experiment}_selected_3seeds.csv"
         aggregate.write_csv(os.path.join(csv_dir, csv_name), flat)
 
         print(f"  examined {len(gate_log)} candidate episodes, "

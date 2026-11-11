@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Round-3 acceptance validation: the 14 checks the brief requires.
+"""Round-3 acceptance validation: the checks the brief requires (V5 retired).
 
 Every check reads the ACTUAL output files -- the raw episodes and the round-3
 CSVs -- not the configuration that was supposed to produce them. A check that
@@ -9,7 +9,7 @@ only re-read the config would pass even if the runs had used something else.
   V2  E1 EE random targets resample every 3 s      (measured in commands.csv)
   V3  E1 EE target updates stay discontinuous      (no interpolation added)
   V4  E2 per-axis command envelopes are 0.2/0.4/0.6
-  V5  E3 task settings unchanged from round 2
+  V5  (removed: E3 v1 reuse check; E3 was rebuilt as v3, see docs/E3_V3_CLEANUP.md)
   V6  every condition has exactly 50 seed IDs, 0-49
   V7  compared baselines received bit-identical commands
   V8  full-window RMSE includes command-switch transients
@@ -229,46 +229,11 @@ def v4_e2_envelopes(seeds) -> Check:
     return c
 
 
-def v5_e3_unchanged(seeds) -> Check:
-    c = Check("V5", "E3 task settings unchanged from round 2")
-    archived = os.path.join(common.BENCH, "results", "archive_round2",
-                            "configs", "E3.yaml")
-    current = os.path.join(common.BENCH, "configs", "E3.yaml")
-    if not os.path.isfile(archived):
-        c.fail("archived round-2 E3.yaml not found")
-    else:
-        import hashlib
-
-        def sha(p):
-            return hashlib.sha256(open(p, "rb").read()).hexdigest()
-
-        a, b = sha(archived), sha(current)
-        c.evidence["E3_yaml_sha256"] = {"archived_round2": a, "round3": b}
-        if a != b:
-            c.fail(f"E3.yaml changed: {a[:12]} -> {b[:12]}")
-        else:
-            c.note(f"configs/E3.yaml is byte-identical to round 2 (sha256 {a[:12]})")
-    verification = os.path.join(common.OUT, "E3", "E3_reuse_verification.json")
-    if os.path.isfile(verification):
-        with open(verification, encoding="utf-8") as h:
-            payload = json.load(h)
-        c.evidence["reuse_verification"] = payload
-        if payload["rerun_required"]:
-            c.fail(f"{payload['rerun_required']} E3 episodes failed reuse verification")
-        else:
-            c.note(f"all {payload['verified_reusable']} E3 episodes passed the "
-                   f"9-point reuse check (commands bit-exact, metrics "
-                   f"reconstructed, assets and initial states re-verified)")
-    else:
-        c.fail("E3 reuse verification output not found")
-    return c
-
-
 def v6_seed_coverage(seeds) -> Check:
     c = Check("V6", "every condition has exactly 50 seed IDs, 0-49")
     want = set(seeds)
     coverage = {}
-    for experiment in ("E1", "E2", "E3"):
+    for experiment in ("E1", "E2"):
         rows = common.read_csv(os.path.join(common.OUT, experiment, "per_seed.csv"))
         cells: dict = {}
         for r in rows:
@@ -296,7 +261,6 @@ def v7_identical_commands(seeds) -> Check:
     for experiment, baselines, conditions in (
         ("E1", ("C1", "C3", "C5"), ("T1", "T2", "T3", "T4")),
         ("E2", ("C1", "C2"), ("Low", "Medium", "High")),
-        ("E3", ("C1", "C3", "C5"), ("S11_circle", "S22_line", "S02_semicircle")),
     ):
         for condition in conditions:
             for seed in seeds:
@@ -370,8 +334,7 @@ def v8_transients_included(seeds) -> Check:
 
 def v9_records_present(seeds) -> Check:
     c = Check("V9", "per-seed records present, unique and complete")
-    expected = {"E1": 3 * 4 * len(seeds), "E2": 2 * 3 * len(seeds),
-                "E3": 3 * 27 * len(seeds)}
+    expected = {"E1": 3 * 4 * len(seeds), "E2": 2 * 3 * len(seeds)}
     counts = {}
     for experiment, want in expected.items():
         rows = common.read_csv(os.path.join(common.OUT, experiment, "per_seed.csv"))
@@ -398,7 +361,7 @@ def v10_means_reproducible(seeds) -> Check:
 
     c = Check("V10", "aggregate means reproducible from the per-seed CSVs alone")
     total = 0
-    for experiment in ("E1", "E2", "E3"):
+    for experiment in ("E1", "E2"):
         out_dir = os.path.join(common.OUT, experiment)
         problems = aggregate3.verify_means_from_csv(out_dir, experiment)
         n = len(common.read_csv(os.path.join(out_dir, "summary_50seeds.csv")))
@@ -415,7 +378,7 @@ def v10_means_reproducible(seeds) -> Check:
 
 def v11_pairing(seeds) -> Check:
     c = Check("V11", "paired comparisons use matching seed / condition / family IDs")
-    for experiment in ("E1", "E2", "E3"):
+    for experiment in ("E1", "E2"):
         per_seed = common.read_csv(os.path.join(common.OUT, experiment, "per_seed.csv"))
         paired = common.read_csv(os.path.join(common.OUT, experiment,
                                               "paired_comparisons.csv"))
@@ -430,13 +393,7 @@ def v11_pairing(seeds) -> Check:
             if p.get("trajectory_family") in ("all(pooled)",):
                 continue
             metric = p["metric"]
-            if experiment == "E3":
-                cond = [r["condition"] for r in per_seed
-                        if r["condition"].startswith(p["condition"] + "_")
-                        and r["trajectory_family"] == p["trajectory_family"]]
-                condition = cond[0] if cond else None
-            else:
-                condition = p["condition"]
+            condition = p["condition"]
             if condition is None:
                 continue
             ref = {s: float(index[(condition, "C1", s)][metric])
@@ -461,21 +418,6 @@ def v11_pairing(seeds) -> Check:
             c.note(f"{experiment}: every per-family paired comparison re-derived "
                    f"by differencing matched seed IDs first; n_pairs and mean "
                    f"difference both reproduce")
-    # Degradation rows must name an existing reference condition.
-    deg = common.read_csv(os.path.join(common.OUT, "E3", "per_seed_degradation.csv"))
-    for r in deg[:5000]:
-        if r["degradation_type"] == "locomotion_induced_ee":
-            if float(r["reference_alpha_base"]) != 0.0 or \
-               abs(float(r["reference_alpha_ee"]) - float(r["alpha_ee"])) > 1e-12:
-                c.fail(f"degradation reference mismatch: {r}")
-                break
-        else:
-            if float(r["reference_alpha_ee"]) != 0.0 or \
-               abs(float(r["reference_alpha_base"]) - float(r["alpha_base"])) > 1e-12:
-                c.fail(f"degradation reference mismatch: {r}")
-                break
-    c.note("every E3 degradation row names its matched reference cell and was "
-           "differenced within one (baseline, trajectory family, seed)")
     return c
 
 
@@ -588,7 +530,7 @@ def v14_no_silent_acceptance(seeds) -> Check:
         c.note("no missing or incomplete episode in any official cell")
     # Terminations are retained and reported, not dropped.
     terminations = []
-    for experiment in ("E1", "E2", "E3"):
+    for experiment in ("E1", "E2"):
         rows = common.read_csv(os.path.join(common.OUT, experiment, "per_seed.csv"))
         term = [r for r in rows if int(r["survived"]) == 0]
         terminations.append((experiment, len(term), len(rows)))
@@ -639,7 +581,6 @@ def main(argv=None) -> int:
         v2_e1_ee_resampling(scan_seeds),
         v3_e1_no_interpolation(scan_seeds),
         v4_e2_envelopes(scan_seeds),
-        v5_e3_unchanged(seeds),
         v6_seed_coverage(seeds),
         v7_identical_commands(scan_seeds),
         v8_transients_included(seeds),

@@ -54,13 +54,6 @@ class TestDeterminism(unittest.TestCase):
             np.testing.assert_array_equal(s1.base.commands, s2.base.commands)
             np.testing.assert_array_equal(s1.ee.commands, s2.ee.commands)
 
-    def test_e3_scenarios_reproducible(self):
-        cfg, _ = _cfgs("E3")
-        s1 = E.build_e3(cfg, "S11_circle", 5)
-        s2 = E.build_e3(cfg, "S11_circle", 5)
-        np.testing.assert_array_equal(s1.ee.commands, s2.ee.commands)
-        np.testing.assert_array_equal(s1.base.commands, s2.base.commands)
-
 
 # ==========================================================================
 # 2. Base velocity resampling interval 2-4 s
@@ -174,13 +167,6 @@ class TestCommandSharing(unittest.TestCase):
         np.testing.assert_array_equal(s["T3"].base.commands, s["T4"].base.commands)
         np.testing.assert_array_equal(s["T1"].ee.commands, s["T3"].ee.commands)
         np.testing.assert_array_equal(s["T2"].ee.commands, s["T4"].ee.commands)
-
-    def test_e3_base_waveform_shared_across_intensities(self):
-        cfg, _ = _cfgs("E3")
-        s0 = E.build_e3(cfg, "S10_line", 3)
-        s1 = E.build_e3(cfg, "S20_line", 3)
-        np.testing.assert_array_equal(s0.base.waveform, s1.base.waveform)
-        np.testing.assert_allclose(s1.base.commands, s0.base.commands * 2.0, atol=1e-6)
 
 
 # ==========================================================================
@@ -331,130 +317,6 @@ class TestMetricMath(unittest.TestCase):
         errs = np.array([0.0, 10.0])
         self.assertAlmostEqual(float(np.mean(errs)), 5.0, places=12)
         self.assertNotAlmostEqual(float(np.sqrt(np.mean(errs**2))), 5.0, places=3)
-
-
-# ==========================================================================
-# 9 + 10. E3 trajectory geometry, speed control and the 3x3 matrix
-# ==========================================================================
-class TestE3Trajectories(unittest.TestCase):
-    def setUp(self):
-        self.cfg, self.glob = _cfgs("E3")
-        self.table = E.keypoint_table(self.glob)
-        self.n = E.n_eval_ticks(self.cfg)
-
-    def _spec(self, family):
-        spec = sc.EETrajectorySpec(
-            family=family,
-            center=tuple(self.cfg["ee"]["center"]),
-            amplitude=float(self.cfg["ee"]["amplitude"]),
-            speed_max=float(self.cfg["ee"]["speed_max"]),
-        )
-        return sc.resolve_trajectory_orientation(spec, self.table)
-
-    def test_mean_path_speed_matches_alpha(self):
-        for family in self.cfg["ee"]["families"]:
-            spec = self._spec(family)
-            for alpha in (0.5, 1.0):
-                t = np.arange(20000) * 1e-3
-                p = spec.position(t, alpha)
-                seg = np.linalg.norm(np.diff(p, axis=0), axis=1)
-                # average over whole cycles only
-                period = spec.period_s(alpha)
-                n_whole = int(np.floor(t[-1] / period) * period / 1e-3)
-                mean_speed = seg[:n_whole].sum() / (n_whole * 1e-3)
-                self.assertAlmostEqual(
-                    mean_speed, alpha * spec.speed_max, delta=0.01,
-                    msg=f"{family} alpha={alpha}: mean speed {mean_speed}",
-                )
-
-    def test_speed_scales_linearly_with_alpha(self):
-        for family in self.cfg["ee"]["families"]:
-            spec = self._spec(family)
-            self.assertAlmostEqual(
-                spec.period_s(0.5) / spec.period_s(1.0), 2.0, places=9
-            )
-
-    def test_shape_amplitude_and_center_invariant_to_speed(self):
-        for family in self.cfg["ee"]["families"]:
-            spec = self._spec(family)
-            # sample one full cycle at each alpha and compare the point sets
-            pts = {}
-            for alpha in (0.5, 1.0):
-                period = spec.period_s(alpha)
-                t = np.linspace(0.0, period, 2001)
-                pts[alpha] = spec.position(t, alpha)
-            np.testing.assert_allclose(pts[0.5], pts[1.0], atol=1e-9)
-            radius = np.linalg.norm(pts[1.0] - np.asarray(spec.center), axis=1)
-            self.assertAlmostEqual(float(radius.max()), spec.amplitude, places=6)
-
-    def test_stationary_target_when_alpha_ee_zero(self):
-        for family in self.cfg["ee"]["families"]:
-            spec = self._spec(family)
-            s = sc.make_ee_trajectory_schedule(self.n, CONTROL_DT, spec, 0.0, self.table)
-            self.assertEqual(len(np.unique(s.commands, axis=0)), 1)
-
-    def test_velocity_is_continuous_including_reversals(self):
-        for family in self.cfg["ee"]["families"]:
-            spec = self._spec(family)
-            dt = 1e-4
-            t = np.arange(0.0, 2.0 * spec.period_s(1.0), dt)
-            p = spec.position(t, 1.0)
-            v = np.diff(p, axis=0) / dt
-            jump = np.linalg.norm(np.diff(v, axis=0), axis=1)
-            # a discontinuous reversal would give a jump of order 2*speed/dt
-            self.assertLess(float(jump.max()), 0.05, msg=f"{family} velocity jump")
-
-    def test_paths_inside_native_support(self):
-        for family in self.cfg["ee"]["families"]:
-            spec = self._spec(family)
-            t = np.linspace(0.0, spec.period_s(1.0), 2001)
-            d = self.table.support_distance(spec.position(t, 1.0))
-            self.assertLess(
-                float(d.max()), float(self.cfg["ee"]["support_tolerance"]),
-                msg=f"{family} leaves the native command support",
-            )
-
-    def test_orientation_protocol_identical_across_family_and_speed(self):
-        refs = []
-        for family in self.cfg["ee"]["families"]:
-            spec = self._spec(family)
-            for alpha in (0.0, 0.5, 1.0):
-                s = sc.make_ee_trajectory_schedule(self.n, CONTROL_DT, spec, alpha, self.table)
-                _, R = frames.keypoints_to_pose(s.commands[0])
-                refs.append(R)
-                for row in s.commands[::97]:
-                    _, R2 = frames.keypoints_to_pose(row)
-                    np.testing.assert_allclose(R, R2, atol=1e-5)
-        for R in refs[1:]:
-            np.testing.assert_allclose(refs[0], R, atol=1e-6)
-
-    def test_e3_does_not_use_e1_discrete_resampling(self):
-        spec = self._spec("circle")
-        s = sc.make_ee_trajectory_schedule(self.n, CONTROL_DT, spec, 1.0, self.table)
-        self.assertEqual(len(s.switch_ticks), 0)
-        # continuous: consecutive commands differ by a small amount every tick
-        step = np.linalg.norm(np.diff(s.commands[:, 0:3], axis=0), axis=1)
-        self.assertGreater(float(step.min()), 0.0)
-        self.assertLess(float(step.max()), 0.02)
-
-    def test_3x3_matrix_generation(self):
-        conditions = E.e3_conditions(self.cfg)
-        self.assertEqual(len(conditions), 3 * 3 * 3)
-        tags = {c[0].split("_")[0] for c in conditions}
-        self.assertEqual(tags, {f"S{i}{j}" for i in range(3) for j in range(3)})
-        for name, ab, ae, family in conditions:
-            ab2, ae2, fam2 = E.parse_e3_condition(name, self.cfg)
-            self.assertEqual((ab, ae, family), (ab2, ae2, fam2))
-        alphas = {(c[1], c[2]) for c in conditions}
-        self.assertEqual(
-            alphas, {(a, b) for a in (0.0, 0.5, 1.0) for b in (0.0, 0.5, 1.0)}
-        )
-
-    def test_base_amplitude_never_exceeds_supported_range(self):
-        limits = np.asarray(self.cfg["base_command_limits"])
-        for name, _, _, _ in E.e3_conditions(self.cfg):
-            s = E.build_e3(self.cfg, name, 0)
-            self.assertTrue((np.abs(s.base.commands) <= limits.max() + 1e-6).all())
 
 
 # ==========================================================================

@@ -21,10 +21,6 @@ Statistical rules
   negative difference is reported as measured, never suppressed.
 * Survival is a proportion, so it gets a Wilson interval rather than a
   bootstrap of a 0/1 mean.
-* E3 family pooling uses a CLUSTER bootstrap over seeds: the three trajectory
-  families at one seed share that seed's initial state, so they are correlated
-  and are averaged within the seed before resampling. Treating them as 150
-  independent trials would shrink the intervals by about sqrt(3).
 """
 
 from __future__ import annotations
@@ -63,15 +59,6 @@ E2_METRICS = [
     ("valid_evaluation_time_s", "s", False),
     ("survived", "-", False),
 ]
-E3_METRICS = [
-    ("ee_position_rmse_m", "m", True),
-    ("base_vxy_rmse_mps", "m/s", True),
-    ("base_yaw_rmse_radps", "rad/s", True),
-    ("ee_orientation_mae_deg", "deg", True),
-    ("valid_evaluation_time_s", "s", False),
-    ("survived", "-", False),
-]
-
 SUMMARY_COLUMNS = [
     "experiment", "condition", "trajectory_family", "alpha_base", "alpha_ee",
     "baseline", "metric", "unit", "n_seeds", "mean", "standard_deviation",
@@ -205,173 +192,6 @@ def run_experiment(experiment, metrics, condition_order, rivals, out_dir, cfg):
 
 
 # ==========================================================================
-# E3: per-cell, per-family, and family-pooled (cluster bootstrap over seeds)
-# ==========================================================================
-def _pool_families_by_seed(rows, metric):
-    """seed -> mean over the trajectory families present at that seed.
-
-    The three families at one seed share that seed's initial state, so they are
-    a cluster, not three independent trials. Averaging within the seed and then
-    bootstrapping seeds is the cluster bootstrap; it keeps the effective sample
-    size at the number of seeds.
-    """
-    acc: dict = {}
-    for r in rows:
-        acc.setdefault(int(r["seed"]), []).append(float(r[metric]))
-    return {s: float(np.mean(v)) for s, v in acc.items()}
-
-
-def _pooled_summary(rows, metric, unit, cfg, keys) -> dict:
-    per_seed = _pool_families_by_seed(rows, metric)
-    seeds = sorted(per_seed)
-    values = np.asarray([per_seed[s] for s in seeds], dtype=np.float64)
-    res = stats.summarize(values, n_resamples=cfg["bootstrap_resamples"],
-                          seed=cfg["bootstrap_seed"], confidence=cfg["confidence"])
-    surv = np.asarray([int(r["survived"]) for r in rows])
-    wl, wh = stats.wilson_interval(int(surv.sum()), int(surv.size), cfg["confidence"])
-    out = dict(keys)
-    out.update(
-        {
-            "metric": metric, "unit": unit, "n_seeds": len(seeds),
-            "mean": res["mean"], "standard_deviation": res["std"],
-            "ci95_lower": res["ci_low"], "ci95_upper": res["ci_high"],
-            "median": res["median"],
-            "min": float(values.min()) if values.size else float("nan"),
-            "max": float(values.max()) if values.size else float("nan"),
-            "n_survived": int(surv.sum()),
-            "survival_wilson_lower": wl, "survival_wilson_upper": wh,
-            "seed_min": min(seeds), "seed_max": max(seeds),
-            "bootstrap_resamples": cfg["bootstrap_resamples"],
-            "bootstrap_seed": cfg["bootstrap_seed"],
-        }
-    )
-    return out
-
-
-def _pooled_paired(rows, reference, rival, metric, unit, lib, cfg, keys) -> dict:
-    ref = _pool_families_by_seed([r for r in rows if r["baseline"] == reference], metric)
-    riv = _pool_families_by_seed([r for r in rows if r["baseline"] == rival], metric)
-    res = stats.paired_advantage(ref, riv, n_resamples=cfg["bootstrap_resamples"],
-                                 seed=cfg["bootstrap_seed"], confidence=cfg["confidence"])
-    shared = sorted(set(ref) & set(riv))
-    ref_mean = float(np.mean([ref[s] for s in shared])) if shared else float("nan")
-    riv_mean = float(np.mean([riv[s] for s in shared])) if shared else float("nan")
-    out = dict(keys)
-    out.update(
-        {
-            "comparison": f"{rival}_minus_{reference}", "reference": reference,
-            "rival": rival, "metric": metric, "unit": unit,
-            "lower_is_better": int(bool(lib)), "n_pairs": res["n_pairs"],
-            "mean_difference": res["mean"], "c1_minus_rival_mean": -res["mean"],
-            "median_difference": res["median"], "sd_difference": res.get("std", float("nan")),
-            "ci95_lower": res["ci_low"], "ci95_upper": res["ci_high"],
-            "median_ci95_lower": res["median_ci_low"],
-            "median_ci95_upper": res["median_ci_high"],
-            "frac_pairs_c1_better": res["frac_positive"],
-            "n_pairs_c1_better": res["n_positive"],
-            "significant": int(res["significant"]),
-            "reference_mean": ref_mean, "rival_mean": riv_mean,
-            "relative_difference_pct": (
-                100.0 * res["mean"] / ref_mean if np.isfinite(ref_mean) and ref_mean else float("nan")
-            ),
-            "sign_convention": SIGN_CONVENTION,
-            "bootstrap_resamples": cfg["bootstrap_resamples"],
-            "bootstrap_seed": cfg["bootstrap_seed"],
-        }
-    )
-    return out
-
-
-def run_e3(out_dir, cfg):
-    rows = common.read_csv(os.path.join(out_dir, "per_seed.csv"))
-    for r in rows:
-        r["seed"] = int(r["seed"])
-        r["survived"] = int(r["survived"])
-        r["alpha_base"] = float(r["alpha_base"])
-        r["alpha_ee"] = float(r["alpha_ee"])
-    summary, paired = [], []
-
-    # ---- per (cell, family) and per cell pooled over families ----
-    for (ab, ae), cell in sorted(_group(rows, ["alpha_base", "alpha_ee"]).items()):
-        tag = _cell_tag(ab, ae)
-        for (family,), fam in sorted(_group(cell, ["trajectory_family"]).items()):
-            keys = {"experiment": "E3", "condition": tag, "trajectory_family": family,
-                    "alpha_base": ab, "alpha_ee": ae}
-            for (baseline,), per_b in sorted(_group(fam, ["baseline"]).items()):
-                for metric, unit, lib in E3_METRICS:
-                    summary.append(summarize_cell(per_b, metric, unit, cfg,
-                                                  dict(keys, baseline=baseline)))
-            for rival in ("C3", "C5"):
-                for metric, unit, lib in E3_METRICS:
-                    paired.append(paired_cell(fam, "C1", rival, metric, unit, lib, cfg, keys))
-        keys = {"experiment": "E3", "condition": tag, "trajectory_family": "all(pooled)",
-                "alpha_base": ab, "alpha_ee": ae}
-        for (baseline,), per_b in sorted(_group(cell, ["baseline"]).items()):
-            for metric, unit, lib in E3_METRICS:
-                summary.append(_pooled_summary(per_b, metric, unit, cfg,
-                                               dict(keys, baseline=baseline)))
-        for rival in ("C3", "C5"):
-            for metric, unit, lib in E3_METRICS:
-                paired.append(_pooled_paired(cell, "C1", rival, metric, unit, lib, cfg, keys))
-
-    common.write_csv(os.path.join(out_dir, "summary_50seeds.csv"), summary, SUMMARY_COLUMNS)
-
-    # ---- degradation ----
-    deg = common.read_csv(os.path.join(out_dir, "per_seed_degradation.csv"))
-    for r in deg:
-        r["seed"] = int(r["seed"])
-        r["survived"] = int(r["condition_survived"])
-        r["degradation"] = float(r["degradation"])
-        r["alpha_base"] = float(r["alpha_base"])
-        r["alpha_ee"] = float(r["alpha_ee"])
-    deg_summary, deg_paired = [], []
-    for (kind, ab, ae), cell in sorted(
-        _group(deg, ["degradation_type", "alpha_base", "alpha_ee"]).items()
-    ):
-        tag = _cell_tag(ab, ae)
-        ref_tag = _cell_tag(0.0, ae) if kind == "locomotion_induced_ee" else _cell_tag(ab, 0.0)
-        for (family,), fam in sorted(_group(cell, ["trajectory_family"]).items()):
-            keys = {"experiment": "E3", "condition": tag, "trajectory_family": family,
-                    "alpha_base": ab, "alpha_ee": ae,
-                    "degradation_type": kind, "reference_condition": ref_tag}
-            for (baseline,), per_b in sorted(_group(fam, ["baseline"]).items()):
-                deg_summary.append(summarize_cell(per_b, "degradation", _deg_unit(kind), cfg,
-                                                  dict(keys, baseline=baseline)))
-            for rival in ("C3", "C5"):
-                deg_paired.append(
-                    paired_cell(fam, "C1", rival, "degradation", _deg_unit(kind), True, cfg, keys)
-                )
-        keys = {"experiment": "E3", "condition": tag, "trajectory_family": "all(pooled)",
-                "alpha_base": ab, "alpha_ee": ae,
-                "degradation_type": kind, "reference_condition": ref_tag}
-        for (baseline,), per_b in sorted(_group(cell, ["baseline"]).items()):
-            deg_summary.append(_pooled_summary(per_b, "degradation", _deg_unit(kind), cfg,
-                                               dict(keys, baseline=baseline)))
-        for rival in ("C3", "C5"):
-            deg_paired.append(
-                _pooled_paired(cell, "C1", rival, "degradation", _deg_unit(kind), True, cfg, keys)
-            )
-
-    common.write_csv(os.path.join(out_dir, "summary_degradation.csv"), deg_summary,
-                     SUMMARY_COLUMNS[:1] + ["degradation_type", "reference_condition"]
-                     + SUMMARY_COLUMNS[1:])
-    common.write_csv(os.path.join(out_dir, "paired_comparisons.csv"),
-                     paired + deg_paired,
-                     PAIRED_COLUMNS[:1] + ["degradation_type", "reference_condition"]
-                     + PAIRED_COLUMNS[1:])
-    return summary, paired, deg_summary, deg_paired
-
-
-def _cell_tag(ab: float, ae: float) -> str:
-    levels = {0.0: 0, 0.5: 1, 1.0: 2}
-    return f"S{levels[round(ab,6)]}{levels[round(ae,6)]}"
-
-
-def _deg_unit(kind: str) -> str:
-    return "m" if kind == "locomotion_induced_ee" else "m/s"
-
-
-# ==========================================================================
 def verify_means_from_csv(out_dir, experiment, tol=1e-12) -> list[str]:
     """Independently recompute every summary mean straight from per_seed.csv.
 
@@ -408,18 +228,13 @@ def verify_means_from_csv(out_dir, experiment, tol=1e-12) -> list[str]:
 
 
 def _cell_matches(row, summary_row, experiment) -> bool:
-    if experiment != "E3":
-        return row["condition"] == summary_row["condition"]
-    return (
-        abs(float(row["alpha_base"]) - float(summary_row["alpha_base"])) < 1e-12
-        and abs(float(row["alpha_ee"]) - float(summary_row["alpha_ee"])) < 1e-12
-    )
+    return row["condition"] == summary_row["condition"]
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--experiments", default="E1,E2,E3")
+    parser.add_argument("--experiments", default="E1,E2")
     parser.add_argument("--out", default=common.OUT)
     args = parser.parse_args(argv)
     wanted = [e.strip() for e in args.experiments.split(",")]
@@ -443,11 +258,6 @@ def main(argv=None) -> int:
                               ["C2"], os.path.join(args.out, "E2"), cfg)
         print(f"  E2: {len(s)} summary rows, {len(p)} paired comparisons")
         problems += verify_means_from_csv(os.path.join(args.out, "E2"), "E2")
-    if "E3" in wanted:
-        s, p, ds, dp = run_e3(os.path.join(args.out, "E3"), cfg)
-        print(f"  E3: {len(s)} summary rows ({len(p)} paired) "
-              f"+ {len(ds)} degradation summary rows ({len(dp)} paired)")
-        problems += verify_means_from_csv(os.path.join(args.out, "E3"), "E3")
 
     print("-" * 78)
     if problems:

@@ -388,16 +388,6 @@ E2_SELECTED_METRICS = [
     ("leg_acc_rms", r"$a_{leg}$", 1),
     ("arm_acc_rms", r"$a_{arm}$", 1),
 ]
-E3_SELECTED_METRICS = [
-    ("ee_pos_rmse", r"$E_{p}$ (m)", 3),
-    ("ee_ori_mae_deg", r"$E_{R}$ (deg)", 1),
-    ("base_vxy_rmse", r"$E_{v}$ (m/s)", 3),
-    ("base_wz_rmse", r"$E_{\omega}$ (rad/s)", 3),
-    ("delta_ee_pos_rmse_from_base", r"$\Delta E_{p}$ (m)", 4),
-    ("delta_base_vxy_rmse_from_ee", r"$\Delta E_{v}$ (m/s)", 4),
-]
-
-
 def e1_selected_table(cases, out_dir, name="E1_selected_3seeds"):
     _selected_rows_table(
         cases, E1_SELECTED_METRICS, ["C1", "C3", "C5"],
@@ -421,14 +411,3 @@ def e2_selected_table(cases, out_dir, name="E2_selected_3seeds"):
         "tab:e2-selected", os.path.join(out_dir, f"{name}.tex"))
 
 
-def e3_selected_table(cases, out_dir, name="E3_selected_3seeds"):
-    _selected_rows_table(
-        cases, E3_SELECTED_METRICS, ["C1", "C3", "C5"],
-        SELECTED_CAPTION_PREFIX
-        + r"All three methods ran the identical base-velocity waveform and "
-          r"end-effector path in the stated combined-motion cell. "
-          r"$\Delta E_{p}$ is the locomotion-induced EE error increase and "
-          r"$\Delta E_{v}$ the manipulation-induced base error increase, both "
-          r"computed for this seed against its own $\alpha=0$ reference cells."
-        + SELECTED_CAPTION_SUFFIX,
-        "tab:e3-selected", os.path.join(out_dir, f"{name}.tex"))

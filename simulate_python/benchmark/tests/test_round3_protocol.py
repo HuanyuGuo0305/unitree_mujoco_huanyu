@@ -169,27 +169,6 @@ class TestE2Envelopes(unittest.TestCase):
             E.e2_axis_limits(cfg, "High")
 
 
-class TestE3Unchanged(unittest.TestCase):
-    """Validation item 5: the E3 scenario is untouched in round 3."""
-
-    def test_intensity_matrix_and_families(self):
-        cfg = _cfg("E3")
-        self.assertEqual(cfg["alpha_base"], [0.0, 0.5, 1.0])
-        self.assertEqual(cfg["alpha_ee"], [0.0, 0.5, 1.0])
-        self.assertEqual(cfg["ee"]["families"], ["line", "circle", "semicircle"])
-
-    def test_geometry_and_timing(self):
-        ee = _cfg("E3")["ee"]
-        self.assertEqual(ee["center"], [0.60, 0.00, 0.75])
-        self.assertEqual(float(ee["amplitude"]), 0.20)
-        self.assertEqual(float(ee["speed_max"]), 0.40)
-        self.assertEqual(float(_cfg("E3")["duration_s"]), 20.0)
-
-    def test_base_segment_range_is_still_two_to_four(self):
-        """E3 must NOT inherit E1's new 2-3 s resampling."""
-        self.assertEqual(_cfg("E3")["base"]["segment_duration_range"], [2.0, 4.0])
-
-
 class TestSeedPolicy(unittest.TestCase):
     """Validation item 6: exactly 50 official seeds, 0-49."""
 
@@ -209,8 +188,7 @@ class TestIdenticalCommandsAcrossBaselines(unittest.TestCase):
 
     def test_schedules_are_a_function_of_condition_and_seed_alone(self):
         for experiment, conditions in (("E1", ("T1", "T4")),
-                                       ("E2", ("Low", "High")),
-                                       ("E3", ("S11_circle", "S22_line"))):
+                                       ("E2", ("Low", "High"))):
             cfg = _cfg(experiment)
             for condition in conditions:
                 a = E.build_scenario(experiment, cfg, condition, 9).arrays()
@@ -284,32 +262,6 @@ class TestStatisticsConventions(unittest.TestCase):
         res = stats.paired_advantage(ref, rival, n_resamples=200, seed=1)
         self.assertEqual(res["n_pairs"], 2)
         self.assertEqual(res["seeds"], [1, 2])
-
-    def test_cluster_pooling_averages_within_the_seed(self):
-        from benchmark.round3 import aggregate3
-
-        rows = [{"seed": 0, "m": 1.0}, {"seed": 0, "m": 3.0},
-                {"seed": 1, "m": 10.0}, {"seed": 1, "m": 20.0}]
-        pooled = aggregate3._pool_families_by_seed(rows, "m")
-        self.assertEqual(pooled, {0: 2.0, 1: 15.0})
-
-    def test_cluster_bootstrap_is_wider_than_treating_families_as_independent(self):
-        """Pooling correlated families as if independent would shrink the CI.
-
-        Three perfectly correlated 'families' per seed carry no more
-        information than one, so the clustered interval must not be narrower
-        than the one computed from the per-seed means.
-        """
-        from benchmark.round3 import aggregate3
-
-        rng = np.random.default_rng(3)
-        per_seed = rng.normal(0, 1, 40)
-        rows = [{"seed": int(s), "m": float(v)} for s, v in enumerate(per_seed)
-                for _ in range(3)]
-        clustered = aggregate3._pool_families_by_seed(rows, "m")
-        lo_c, hi_c = stats.bootstrap_ci(list(clustered.values()), 2000, 7)
-        lo_n, hi_n = stats.bootstrap_ci([r["m"] for r in rows], 2000, 7)
-        self.assertGreater(hi_c - lo_c, hi_n - lo_n)
 
     def test_bootstrap_is_deterministic_across_calls(self):
         values = list(np.random.default_rng(1).normal(size=40))

@@ -232,164 +232,6 @@ def _patterned_base_schedule(
 
 
 # ==========================================================================
-# E3
-# ==========================================================================
-def e3_is_v2(exp_cfg: dict) -> bool:
-    return int(exp_cfg.get("protocol_version", 1)) == 2
-
-
-def e3_conditions(exp_cfg: dict):
-    """All E3 conditions.
-
-    v2: (condition_id, base_bound, ee_speed, family), id ``B{i}E{j}_{family}``
-        with i, j indices into ``base.levels`` / ``ee.speed_levels_mps``.
-    v1: (condition_id, alpha_base, alpha_ee, family), id ``S{i}{j}_{family}``.
-    """
-    if e3_is_v2(exp_cfg):
-        out = []
-        for bi, b in enumerate(exp_cfg["base"]["levels"]):
-            for ei, v in enumerate(exp_cfg["ee"]["speed_levels_mps"]):
-                for family in exp_cfg["ee"]["families"]:
-                    out.append((f"B{bi}E{ei}_{family}", float(b), float(v), family))
-        return out
-    out = []
-    for bi, ab in enumerate(exp_cfg["alpha_base"]):
-        for ei, ae in enumerate(exp_cfg["alpha_ee"]):
-            for family in exp_cfg["ee"]["families"]:
-                out.append((f"S{bi}{ei}_{family}", float(ab), float(ae), family))
-    return out
-
-
-def parse_e3_condition(condition: str, exp_cfg: dict):
-    tag, family = condition.split("_", 1)
-    if e3_is_v2(exp_cfg):
-        if not (tag[0] == "B" and tag[2] == "E" and len(tag) == 4):
-            raise ValueError(f"not an E3 v2 condition id: {condition}")
-        bi, ei = int(tag[1]), int(tag[3])
-        return (float(exp_cfg["base"]["levels"][bi]),
-                float(exp_cfg["ee"]["speed_levels_mps"][ei]), family)
-    bi, ei = int(tag[1]), int(tag[2])
-    return float(exp_cfg["alpha_base"][bi]), float(exp_cfg["alpha_ee"][ei]), family
-
-
-class SettleHoldScenario(PrecomputedScenario):
-    """Precomputed scenario whose settling-window EE command is the schedule's
-    first EE command (E3 v2), through the runner's existing settle hook --
-    the same mechanism E4 uses. Base command during settling stays zero."""
-
-    def settle_commands(self, adapter, initial_ee_kp_plb):
-        return np.zeros(3, dtype=np.float32), np.asarray(self.ee.commands[0], dtype=np.float32)
-
-
-def build_e3(exp_cfg: dict, condition: str, seed: int, control_dt: float = 0.02):
-    if e3_is_v2(exp_cfg):
-        return build_e3_v2(exp_cfg, condition, seed, control_dt)
-    return build_e3_v1(exp_cfg, condition, seed, control_dt)
-
-
-def build_e3_v2(exp_cfg: dict, condition: str, seed: int, control_dt: float = 0.02):
-    bound, speed, family = parse_e3_condition(condition, exp_cfg)
-    limits = np.asarray(exp_cfg["base_command_limits"], dtype=np.float64)
-    if bound < 0.0 or np.any(bound > limits + 1e-12):
-        raise ValueError(f"E3 v2 base bound {bound} outside the supported range {limits.tolist()}")
-    n_ticks = n_eval_ticks(exp_cfg, control_dt)
-    table = keypoint_table(exp_cfg["_global"])
-    ee_cfg = exp_cfg["ee"]
-
-    # Existing seeded protocol; limits = the bound itself and intensity 1, so the
-    # commands are exactly waveform * B (no float rescaling of the 0.6 limit).
-    base_schedule = sc.make_base_velocity_schedule(
-        n_ticks, control_dt, seed,
-        limits=(bound, bound, bound) if bound > 0.0 else tuple(limits),
-        intensity=1.0,
-        segment_duration_range=tuple(exp_cfg["base"]["segment_duration_range"]),
-        zero=(bound == 0.0),
-    )
-    if ee_cfg.get("orientation_protocol") != "table_row":
-        raise ValueError("E3 v2 requires orientation_protocol: table_row")
-    orientation = table.row(int(ee_cfg["orientation_table_row"]))
-    ee_schedule = sc.make_ee_arclength_schedule(
-        n_ticks, control_dt, family, ee_cfg["center"], float(ee_cfg["amplitude"]),
-        speed, float(ee_cfg["a_peak_mps2"]), orientation, table,
-        support_tolerance=float(ee_cfg["support_tolerance"]),
-    )
-    description = {
-        "experiment": "E3",
-        "protocol_version": 2,
-        "condition": condition,
-        "base_bound": bound,
-        "base_bound_units": "|vx|,|vy| m/s; |wz| rad/s (body frame)",
-        "base_segment_duration_range_s": list(exp_cfg["base"]["segment_duration_range"]),
-        "ee_family": family,
-        "ee_speed_mps": speed,
-        "ee_center": list(ee_cfg["center"]),
-        "ee_amplitude_m": float(ee_cfg["amplitude"]),
-        "ee_path_length_m": sc.e3v2_path_length(family, float(ee_cfg["amplitude"])),
-        "ee_a_peak_mps2": float(ee_cfg["a_peak_mps2"]),
-        "ee_mean_speed_eval_mps": sc.e3v2_mean_speed(
-            family, float(ee_cfg["amplitude"]), speed, float(ee_cfg["a_peak_mps2"]),
-            (n_ticks - 1) * control_dt, control_dt),
-        "ee_orientation_protocol": "fixed; native table row %d" % int(ee_cfg["orientation_table_row"]),
-        "ee_orientation_keypoints_row": [float(v) for v in orientation],
-        "ee_settle_hold": "trajectory start pose",
-        "ee_command_table_sha256": table.sha256,
-        "n_eval_ticks": n_ticks,
-        "seed": seed,
-    }
-    return SettleHoldScenario(base_schedule, ee_schedule, description)
-
-
-def build_e3_v1(exp_cfg: dict, condition: str, seed: int, control_dt: float = 0.02):
-    alpha_base, alpha_ee, family = parse_e3_condition(condition, exp_cfg)
-    n_ticks = n_eval_ticks(exp_cfg, control_dt)
-    table = keypoint_table(exp_cfg["_global"])
-
-    base_schedule = sc.make_base_velocity_schedule(
-        n_ticks,
-        control_dt,
-        seed,
-        limits=exp_cfg["base_command_limits"],
-        intensity=alpha_base,
-        segment_duration_range=tuple(exp_cfg["base"]["segment_duration_range"]),
-        zero=(alpha_base == 0.0),
-    )
-
-    spec = sc.EETrajectorySpec(
-        family=family,
-        center=tuple(exp_cfg["ee"]["center"]),
-        amplitude=float(exp_cfg["ee"]["amplitude"]),
-        speed_max=float(exp_cfg["ee"]["speed_max"]),
-    )
-    spec = sc.resolve_trajectory_orientation(spec, table)
-    ee_schedule = sc.make_ee_trajectory_schedule(
-        n_ticks, control_dt, spec, alpha_ee, table,
-        support_tolerance=float(exp_cfg["ee"]["support_tolerance"]),
-    )
-
-    description = {
-        "experiment": "E3",
-        "condition": condition,
-        "alpha_base": alpha_base,
-        "alpha_ee": alpha_ee,
-        "ee_family": family,
-        "ee_center": list(exp_cfg["ee"]["center"]),
-        "ee_amplitude_m": float(exp_cfg["ee"]["amplitude"]),
-        "ee_speed_max_mps": float(exp_cfg["ee"]["speed_max"]),
-        "ee_mean_speed_mps": alpha_ee * float(exp_cfg["ee"]["speed_max"]),
-        "ee_cycle_period_s": (
-            spec.period_s(alpha_ee) if alpha_ee > 0 else None
-        ),
-        "ee_orientation_protocol": "fixed; nearest native table row to the path centre",
-        "base_limits": list(exp_cfg["base_command_limits"]),
-        "base_amplitude": [alpha_base * v for v in exp_cfg["base_command_limits"]],
-        "ee_command_table_sha256": table.sha256,
-        "n_eval_ticks": n_ticks,
-        "seed": seed,
-    }
-    return PrecomputedScenario(base_schedule, ee_schedule, description)
-
-
-# ==========================================================================
 # E4
 # ==========================================================================
 E4_CONDITIONS = ("chicken_head",)
@@ -471,7 +313,7 @@ def build_e4(exp_cfg: dict, condition: str, seed: int, control_dt: float = 0.02)
 # ==========================================================================
 # dispatch
 # ==========================================================================
-BUILDERS = {"E1": build_e1, "E2": build_e2, "E3": build_e3, "E4": build_e4}
+BUILDERS = {"E1": build_e1, "E2": build_e2, "E4": build_e4}
 
 
 def all_conditions(experiment: str, exp_cfg: dict):
@@ -479,8 +321,6 @@ def all_conditions(experiment: str, exp_cfg: dict):
         return list(E1_CONDITIONS)
     if experiment == "E2":
         return list(E2_CONDITIONS)
-    if experiment == "E3":
-        return [c[0] for c in e3_conditions(exp_cfg)]
     if experiment == "E4":
         return list(E4_CONDITIONS)
     raise KeyError(experiment)

@@ -43,8 +43,6 @@ SPECS = {
     "E2": (["base_vxy_rmse", "base_wz_rmse", "total_power", "leg_power",
             "leg_acc_rms", "arm_acc_rms"],
            ["condition"], [("C1", "C2")]),
-    "E3": (["ee_pos_rmse", "base_vxy_rmse", "ee_ori_mae_deg", "base_wz_rmse"],
-           ["ee_family", "alpha_base", "alpha_ee"], [("C1", "C3"), ("C1", "C5")]),
 }
 
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Phase D: export every individual seed's metrics BEFORE any averaging.
 
-Three per-seed products, one per experiment, plus E1's per-command-interval
-diagnostics and E3's per-seed directional degradation.
+Two per-seed products, one per experiment, plus E1's per-command-interval
+diagnostics.
 
 Nothing in this module averages over seeds, drops an episode, or rounds a
 value for display: floats are written at full ``repr`` precision because these
@@ -77,20 +77,6 @@ E2_EXTRA = [
     "ee_position_rmse_m", "ee_orientation_mae_deg",
     "n_physics_samples", "duration_s", "settle_s", "path",
 ]
-
-E3_REQUIRED = [
-    "condition", "baseline", "trajectory_family", "alpha_base", "alpha_ee", "seed",
-    "base_vxy_rmse_mps", "base_yaw_rmse_radps",
-    "ee_position_rmse_m", "ee_orientation_mae_deg",
-    "valid_evaluation_time_s",
-]
-E3_EXTRA = [
-    "experiment", "survived", "termination_reason", "n_eval_samples",
-    "ee_mean_speed_mps", "base_max_abs_cmd", "ee_position_mae_m",
-    "ee_position_p95_m", "ee_orientation_rmse_deg",
-    "base_vxy_rmse_yawframe_mps", "duration_s", "settle_s", "path",
-]
-
 
 def _common_fields(row: dict) -> dict:
     return {
@@ -372,112 +358,10 @@ def export_e2(out_dir: str) -> tuple[list[dict], list[dict]]:
 
 
 # ==========================================================================
-# E3
-# ==========================================================================
-def export_e3(out_dir: str) -> tuple[list[dict], list[dict]]:
-    exp_cfg, _ = E.load_config("E3")
-    baselines = list(exp_cfg["baselines"])
-    cells = E.e3_conditions(exp_cfg)
-    conditions = [c for c, _ab, _ae, _f in cells]
-    meta_by_condition = {c: (ab, ae, f) for c, ab, ae, f in cells}
-    raw, problems = common.load_official("E3", baselines, conditions)
-
-    rows = []
-    for r in raw:
-        ab, ae, family = meta_by_condition[r["condition"]]
-        out = _common_fields(r)
-        out.update(_tracking_fields(r))
-        out.update(
-            {
-                "trajectory_family": family,
-                "alpha_base": float(ab),
-                "alpha_ee": float(ae),
-                "ee_mean_speed_mps": float(r.get("ee_mean_speed_mps", ae * 0.40)),
-                "base_max_abs_cmd": float(ab) * 0.6,
-                "ee_position_mae_m": float(r["ee_pos_mae"]),
-                "ee_position_p95_m": float(r["ee_pos_p95"]),
-                "ee_orientation_rmse_deg": float(r["ee_ori_rmse_deg"]),
-                "base_vxy_rmse_yawframe_mps": float(r["base_vxy_rmse_yawframe"]),
-            }
-        )
-        rows.append(out)
-
-    rows.sort(key=lambda r: (r["baseline"], r["trajectory_family"],
-                             r["alpha_base"], r["alpha_ee"], r["seed"]))
-    common.write_csv(os.path.join(out_dir, "per_seed.csv"), rows, E3_REQUIRED + E3_EXTRA)
-    return rows, problems
-
-
-DEG_COLUMNS = [
-    "experiment", "baseline", "trajectory_family", "seed",
-    "degradation_type", "condition", "alpha_base", "alpha_ee",
-    "reference_condition", "reference_alpha_base", "reference_alpha_ee",
-    "metric", "value_at_condition", "value_at_reference", "degradation",
-    "condition_survived", "reference_survived",
-]
-
-
-def export_e3_degradation(out_dir: str, per_seed_rows: list[dict]) -> list[dict]:
-    """Per-seed directional degradation, with its reference condition named.
-
-    Delta_EE(ab, ae)   = EE_RMSE(ab, ae)      - EE_RMSE(0, ae)
-    Delta_Base(ab, ae) = Base_XY_RMSE(ab, ae) - Base_XY_RMSE(ab, 0)
-
-    Each difference is formed within one (baseline, trajectory family, seed),
-    so the pairing is exact; a negative value is a genuine measurement (the
-    error went DOWN when the other subsystem moved) and is never clipped.
-    """
-    index = {}
-    for r in per_seed_rows:
-        key = (r["baseline"], r["trajectory_family"], r["seed"],
-               round(float(r["alpha_base"]), 6), round(float(r["alpha_ee"]), 6))
-        index[key] = r
-
-    rows = []
-    for r in per_seed_rows:
-        ab = round(float(r["alpha_base"]), 6)
-        ae = round(float(r["alpha_ee"]), 6)
-        base_key = (r["baseline"], r["trajectory_family"], r["seed"])
-        for kind, metric, ref_ab, ref_ae in (
-            ("locomotion_induced_ee", "ee_position_rmse_m", 0.0, ae),
-            ("manipulation_induced_base", "base_vxy_rmse_mps", ab, 0.0),
-        ):
-            if (ab, ae) == (ref_ab, ref_ae):
-                continue  # the reference condition itself; degradation is 0 by definition
-            ref = index.get(base_key + (round(ref_ab, 6), round(ref_ae, 6)))
-            if ref is None:
-                continue
-            rows.append(
-                {
-                    "experiment": "E3",
-                    "baseline": r["baseline"],
-                    "trajectory_family": r["trajectory_family"],
-                    "seed": r["seed"],
-                    "degradation_type": kind,
-                    "condition": r["condition"],
-                    "alpha_base": ab, "alpha_ee": ae,
-                    "reference_condition": ref["condition"],
-                    "reference_alpha_base": ref_ab, "reference_alpha_ee": ref_ae,
-                    "metric": metric,
-                    "value_at_condition": float(r[metric]),
-                    "value_at_reference": float(ref[metric]),
-                    "degradation": float(r[metric]) - float(ref[metric]),
-                    "condition_survived": int(r["survived"]),
-                    "reference_survived": int(ref["survived"]),
-                }
-            )
-    rows.sort(key=lambda r: (r["degradation_type"], r["baseline"],
-                             r["trajectory_family"], r["alpha_base"],
-                             r["alpha_ee"], r["seed"]))
-    common.write_csv(os.path.join(out_dir, "per_seed_degradation.csv"), rows, DEG_COLUMNS)
-    return rows
-
-
-# ==========================================================================
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--experiments", default="E1,E2,E3")
+    parser.add_argument("--experiments", default="E1,E2")
     parser.add_argument("--out", default=common.OUT)
     parser.add_argument("--skip-intervals", action="store_true")
     args = parser.parse_args(argv)
@@ -509,14 +393,6 @@ def main(argv=None) -> int:
         rows, problems = export_e2(os.path.join(args.out, "E2"))
         all_problems += problems
         _report("E2", rows, problems, seeds)
-
-    if "E3" in wanted:
-        out_dir = os.path.join(args.out, "E3")
-        rows, problems = export_e3(out_dir)
-        all_problems += problems
-        _report("E3", rows, problems, seeds)
-        deg = export_e3_degradation(out_dir, rows)
-        print(f"     per-seed degradation rows: {len(deg)}")
 
     common.write_csv(os.path.join(args.out, "validation", "incomplete_episodes.csv"),
                      all_problems or [{"note": "none"}])

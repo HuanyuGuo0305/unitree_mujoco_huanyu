@@ -2,9 +2,8 @@
 """Figure generation. Each experiment's figures can be produced independently.
 
     python3 benchmark/plot.py --results benchmark/results/raw
-    python3 benchmark/plot.py --experiments E3 --e3-metric ee_pos_rmse
     python3 benchmark/plot.py --experiments E4 --seed 7 --snapshots --video
-    python3 benchmark/plot.py --side-by-side E3 --condition S21_circle --seed 12
+    python3 benchmark/plot.py --side-by-side E1 --condition T4 --seed 12
 """
 
 from __future__ import annotations
@@ -36,9 +35,6 @@ def main(argv=None):
     parser.add_argument("--all-seeds", action="store_true")
     parser.add_argument("--seed-start", type=int, default=None)
     parser.add_argument("--num-seeds", type=int, default=None)
-    parser.add_argument("--e3-metric", default="ee_pos_rmse",
-                        choices=["ee_pos_rmse", "base_vxy_rmse", "ee_ori_mae_deg"],
-                        help="Z metric for the 3-D coordination surfaces")
     parser.add_argument("--seed", type=int, default=0, help="Seed for E4 snapshots/video")
     parser.add_argument("--baseline", default="C1", help="Baseline for E4 snapshots/video")
     parser.add_argument("--snapshots", action="store_true", help="Render E4 snapshots")
@@ -84,32 +80,6 @@ def main(argv=None):
 
         elif experiment == "E2":
             figures.e2_intensity_curves(official, args.out, cfg_stats)
-
-        elif experiment == "E3":
-            exp_cfg, _ = E.load_config("E3")
-            degradation = aggregate.e3_degradation(official, cfg_stats)
-            # primary: 2-D curves, absolute error and degradation, per family
-            for family in [None] + list(exp_cfg["ee"]["families"]):
-                if family is not None and not any(
-                    r["ee_family"] == family for r in official
-                ):
-                    continue
-                figures.e3_two_panel(official, args.out, exp_cfg, cfg_stats,
-                                     family=family, degradation=False)
-                figures.e3_two_panel(degradation, args.out, exp_cfg, cfg_stats,
-                                     family=family, degradation=True)
-            figures.e3_facets(official, args.out, exp_cfg, cfg_stats, degradation=False)
-            figures.e3_facets(degradation, args.out, exp_cfg, cfg_stats, degradation=True)
-            # secondary: 3-D coordination surfaces
-            for family in [None] + list(exp_cfg["ee"]["families"]):
-                if family is not None and not any(
-                    r["ee_family"] == family for r in official
-                ):
-                    continue
-                figures.e3_3d_coordination(
-                    official, args.out, exp_cfg, cfg_stats,
-                    metric=args.e3_metric, family=family,
-                )
 
         elif experiment == "E4":
             exp_cfg, _ = E.load_config("E4")

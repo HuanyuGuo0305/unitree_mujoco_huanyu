@@ -232,6 +232,81 @@ def _patterned_base_schedule(
 
 
 # ==========================================================================
+# E3 (v3): discrete full-pose waypoints x base-motion intensity
+# ==========================================================================
+def e3_conditions(exp_cfg: dict):
+    """(condition_id, base_bound, update_interval_s or None, pattern).
+
+    ``B{i}T{j}_{pattern}``: i indexes ``base.levels``, j indexes
+    ``ee.update_intervals_s`` (j = 0 is the Fixed level)."""
+    out = []
+    for bi, b in enumerate(exp_cfg["base"]["levels"]):
+        for ti, t in enumerate(exp_cfg["ee"]["update_intervals_s"]):
+            for pattern in exp_cfg["ee"]["patterns"]:
+                out.append((f"B{bi}T{ti}_{pattern}", float(b),
+                            None if t is None else float(t), pattern))
+    return out
+
+
+def parse_e3_condition(condition: str, exp_cfg: dict):
+    tag, pattern = condition.split("_", 1)
+    if not (len(tag) == 4 and tag[0] == "B" and tag[2] == "T"):
+        raise ValueError(f"not an E3 v3 condition id: {condition}")
+    bi, ti = int(tag[1]), int(tag[3])
+    t = exp_cfg["ee"]["update_intervals_s"][ti]
+    return float(exp_cfg["base"]["levels"][bi]), (None if t is None else float(t)), pattern
+
+
+def e3_base_schedule(exp_cfg: dict, bound: float, seed: int, n_ticks: int, control_dt: float):
+    limits = np.asarray(exp_cfg["base_command_limits"], dtype=np.float64)
+    if bound < 0.0 or np.any(bound > limits + 1e-12):
+        raise ValueError(f"E3 base bound {bound} outside the supported range {limits.tolist()}")
+    # limits = the bound itself and intensity 1: commands are exactly waveform * B.
+    return sc.make_base_velocity_schedule(
+        n_ticks, control_dt, seed,
+        limits=(bound, bound, bound) if bound > 0.0 else tuple(limits),
+        intensity=1.0,
+        segment_duration_range=tuple(exp_cfg["base"]["segment_duration_range"]),
+        zero=(bound == 0.0),
+    )
+
+
+def build_e3(exp_cfg: dict, condition: str, seed: int, control_dt: float = 0.02):
+    if int(exp_cfg.get("protocol_version", 0)) != 3:
+        raise ValueError("configs/E3.yaml is not an E3 v3 configuration")
+    bound, interval, pattern = parse_e3_condition(condition, exp_cfg)
+    waypoints = (exp_cfg["ee"].get("waypoints") or {}).get(pattern)
+    if waypoints is None:
+        raise ValueError("E3 v3 waypoints are not frozen yet (run benchmark.e3v3.pilot)")
+    kp = np.asarray(waypoints["keypoints_plb"], dtype=np.float32)
+    n_ticks = n_eval_ticks(exp_cfg, control_dt)
+    start, direction = sc.e3v3_start_direction(seed)
+    base_schedule = e3_base_schedule(exp_cfg, bound, seed, n_ticks, control_dt)
+    ee_schedule = sc.make_ee_waypoint_schedule(
+        n_ticks, control_dt, kp, pattern, interval, start, direction)
+    description = {
+        "experiment": "E3",
+        "protocol_version": 3,
+        "condition": condition,
+        "base_bound": bound,
+        "base_bound_units": "|vx|,|vy| m/s; |wz| rad/s (body frame)",
+        "base_segment_duration_range_s": list(exp_cfg["base"]["segment_duration_range"]),
+        "ee_pattern": pattern,
+        "ee_update_interval_s": interval,
+        "ee_level": "Fixed" if interval is None else f"{interval:g}s",
+        "ee_interpolation": "none",
+        "ee_waypoint_set_id": waypoints["candidate_id"],
+        "ee_start_waypoint": int(start),
+        "ee_direction": int(direction),
+        "ee_waypoint_sequence": ee_schedule.row_indices.tolist(),
+        "ee_settle_hold": "measured initial EE pose (runner default)",
+        "n_eval_ticks": n_ticks,
+        "seed": seed,
+    }
+    return PrecomputedScenario(base_schedule, ee_schedule, description)
+
+
+# ==========================================================================
 # E4
 # ==========================================================================
 E4_CONDITIONS = ("chicken_head",)
@@ -313,7 +388,7 @@ def build_e4(exp_cfg: dict, condition: str, seed: int, control_dt: float = 0.02)
 # ==========================================================================
 # dispatch
 # ==========================================================================
-BUILDERS = {"E1": build_e1, "E2": build_e2, "E4": build_e4}
+BUILDERS = {"E1": build_e1, "E2": build_e2, "E3": build_e3, "E4": build_e4}
 
 
 def all_conditions(experiment: str, exp_cfg: dict):
@@ -321,6 +396,8 @@ def all_conditions(experiment: str, exp_cfg: dict):
         return list(E1_CONDITIONS)
     if experiment == "E2":
         return list(E2_CONDITIONS)
+    if experiment == "E3":
+        return [c[0] for c in e3_conditions(exp_cfg)]
     if experiment == "E4":
         return list(E4_CONDITIONS)
     raise KeyError(experiment)

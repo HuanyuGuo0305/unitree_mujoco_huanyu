@@ -1,0 +1,34 @@
+# E3 v3 -- Dynamic whole-body coordination under discrete full-pose EE commands.
+#
+# Pre-registration: benchmark/docs/E3_V3_PREREGISTRATION.md
+# 5 base-motion levels x 5 EE update intervals x 2 spatial patterns x 3
+# controllers x 100 paired seeds = 15,000 episodes.
+
+experiment: E3
+protocol_version: 3
+baselines: [C1, C3, C5]
+duration_s: 30.0          # per episode
+settle_s: null            # null -> inherit baselines.yaml (3.0); EE holds the measured initial pose
+official_seeds: {start: 0, count: 100}
+
+base:
+  # Existing seeded generator (core/scenario.py make_base_velocity_schedule):
+  # piecewise-constant segments of U(2, 4) s, each axis U(-1, 1) times the level.
+  levels: [0.00, 0.15, 0.30, 0.45, 0.60]   # |vx|,|vy| <= B m/s, |wz| <= B rad/s (body frame)
+  segment_duration_range: [2.0, 4.0]
+
+ee:
+  patterns: [line, circle]
+  # EE command update interval; null = "Fixed" (the seed's start waypoint is held).
+  update_intervals_s: [null, 6.0, 4.0, 3.0, 2.0]
+  level_labels: [Fixed, 6s, 4s, 3s, 2s]
+  interpolation: none
+  sequence: {line: "ping-pong 0-1-2-3-4-3-2-1", circle: "cyclic 0-1-2-3-4"}
+  start_direction_rule: "start = (seed mod 10) // 2; direction = +1 even seed, -1 odd seed"
+  # Frozen by benchmark/e3v3/pilot.py after the controller-neutral pilot selection.
+  waypoints: null
+
+pilot:
+  seeds: [9000, 9001, 9002]
+  hold_s: 6.0
+  duration_s: 33.0

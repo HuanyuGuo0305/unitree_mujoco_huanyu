@@ -207,6 +207,71 @@ def make_ee_fixed_schedule(
 
 
 # ==========================================================================
+# E3 v3: discrete full-pose waypoints, switched at a fixed update interval
+# ==========================================================================
+# Five full EE poses (9-D PLB keypoints) on a line or a circle. The command is
+# piecewise constant and switches DIRECTLY between waypoints (no interpolation)
+# every ``interval_s`` seconds, starting at scenario tick 0; ``interval_s =
+# None`` is the "Fixed" level, which holds the start waypoint throughout.
+#   line   : ping-pong order 0-1-2-3-4-3-2-1-0-...
+#   circle : cyclic order 0-1-2-3-4-0-... (direction +1) or reversed (-1)
+# The sequence depends only on (pattern, start, direction), so it is identical
+# for every base level and every controller.
+E3V3_PATTERNS = ("line", "circle")
+_PINGPONG = (0, 1, 2, 3, 4, 3, 2, 1)
+
+
+def e3v3_start_direction(seed: int) -> tuple[int, int]:
+    """Counterbalanced start waypoint and direction (pre-registered):
+    start = (seed mod 10) // 2, direction = +1 for even seeds, -1 for odd."""
+    return (int(seed) % 10) // 2, (1 if int(seed) % 2 == 0 else -1)
+
+
+def e3v3_sequence(pattern: str, start: int, direction: int, n: int) -> np.ndarray:
+    """First ``n`` waypoint indices visited from ``start`` moving ``direction``.
+    At a line end the direction is forced inward."""
+    if pattern == "circle":
+        return (int(start) + int(direction) * np.arange(n)) % 5
+    if pattern != "line":
+        raise ValueError(f"unknown E3 v3 pattern {pattern!r}")
+    if start == 0:
+        phase = 0
+    elif start == 4:
+        phase = 4
+    else:
+        phase = start if direction > 0 else 8 - start
+    return np.asarray([_PINGPONG[(phase + j) % 8] for j in range(n)], dtype=np.int64)
+
+
+def make_ee_waypoint_schedule(
+    n_ticks: int, control_dt: float, waypoints_kp, pattern: str,
+    interval_s: float | None, start: int, direction: int,
+) -> EEKeypointSchedule:
+    """Discrete waypoint switching: command at tick k is waypoint
+    seq[k // steps]; switch ticks are exact multiples of ``steps``."""
+    wp = np.asarray(waypoints_kp, dtype=np.float32).reshape(5, 9)
+    if interval_s is None:
+        seq = e3v3_sequence(pattern, start, direction, 1)
+        idx = np.zeros(n_ticks, dtype=np.int64)
+        switch = np.asarray([], dtype=np.int64)
+    else:
+        steps = int(round(float(interval_s) / control_dt))
+        if steps <= 0 or abs(steps * control_dt - float(interval_s)) > 1e-9:
+            raise ValueError(f"interval {interval_s} s is not a whole number of ticks")
+        n_seg = (n_ticks + steps - 1) // steps
+        seq = e3v3_sequence(pattern, start, direction, n_seg)
+        idx = np.arange(n_ticks, dtype=np.int64) // steps
+        switch = np.arange(steps, n_ticks, steps, dtype=np.int64)
+    commands = wp[seq[idx]].copy()
+    return EEKeypointSchedule(
+        commands=commands.astype(np.float32),
+        switch_ticks=switch,
+        row_indices=seq.astype(np.int64),  # waypoint index of each segment
+        mode=f"waypoints:{pattern}:{'fixed' if interval_s is None else f'{interval_s:g}s'}",
+    )
+
+
+# ==========================================================================
 # E4 world-frame EE stabilisation
 # ==========================================================================
 @dataclass

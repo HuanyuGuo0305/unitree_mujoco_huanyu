@@ -1,62 +1,32 @@
-# E3 v3 -- Dynamic whole-body coordination under discrete full-pose EE commands.
+# E3 -- Random discrete full-pose dynamic whole-body coordination.
 #
-# Pre-registration: benchmark/docs/E3_V3_PREREGISTRATION.md
-# 5 base-motion levels x 5 EE update intervals x 2 spatial patterns x 3
-# controllers x 100 paired seeds = 15,000 episodes.
+# Protocol: benchmark/results/E3/E3_PROTOCOL.md (committed before the official run).
+# 5 base-motion levels x 5 EE command-update intervals x 3 controllers x 100
+# paired seeds = 7,500 episodes. Replaces the earlier E3 versions (v1 smooth
+# trajectories, v2 arc-length paths, v3 fixed line/circle waypoints).
 
 experiment: E3
-protocol_version: 3
+protocol: random_full_pose
 baselines: [C1, C3, C5]
 duration_s: 30.0          # per episode
-settle_s: null            # null -> inherit baselines.yaml (3.0); EE holds the measured initial pose
+settle_s: null            # null -> inherit baselines.yaml (3.0)
 official_seeds: {start: 0, count: 100}
 
 base:
   # Existing seeded generator (core/scenario.py make_base_velocity_schedule):
   # piecewise-constant segments of U(2, 4) s, each axis U(-1, 1) times the level.
+  # Stream label "base_velocity"; independent of the EE pose stream.
   levels: [0.00, 0.15, 0.30, 0.45, 0.60]   # |vx|,|vy| <= B m/s, |wz| <= B rad/s (body frame)
   segment_duration_range: [2.0, 4.0]
 
 ee:
-  patterns: [line, circle]
-  # EE command update interval; null = "Fixed" (the seed's start waypoint is held).
-  update_intervals_s: [null, 6.0, 4.0, 3.0, 2.0]
+  # Targets: rows of the native training table (utilities/data/
+  # keypoints_plb_evaluation_filtered.npy, sha256 d822f110...c328; the same
+  # file every controller was trained on), drawn uniformly with replacement as in
+  # training (PresampledKeypointsDirectCommandPLB: torch.randint, no weights).
+  # Stream label "e3_random_pose". Direct sample-and-hold, no interpolation.
+  update_intervals_s: [null, 6.0, 4.0, 3.0, 2.0]   # null = Fixed (pose 0 held)
   level_labels: [Fixed, 6s, 4s, 3s, 2s]
-  interpolation: none
-  sequence: {line: "ping-pong 0-1-2-3-4-3-2-1", circle: "cyclic 0-1-2-3-4"}
-  start_direction_rule: "start = (seed mod 10) // 2; direction = +1 even seed, -1 odd seed"
-  # Frozen by benchmark/e3v3/pilot.py after the controller-neutral pilot selection.
-  waypoints:
-    line:
-      candidate_id: L-c70z80-y-L60-local_mean-D35-roll0
-      keypoints_plb:   # 9-D: kp0, kp0+R[0.3,0,0], kp0+R[0,0,0.3] (PLB)
-        - [0.7000000, -0.3000000, 0.8000000, 0.8401539, -0.4682745, 0.5949621, 0.8151014, -0.4703462, 1.0184808]
-        - [0.7000000, -0.1500000, 0.8000000, 0.8645886, -0.2202380, 0.5592154, 0.8530464, -0.3500447, 0.9629691]
-        - [0.7000000, 0.0000000, 0.8000000, 0.8661361, 0.0576730, 0.5569515, 0.9025545, -0.2019256, 0.8905414]
-        - [0.7000000, 0.1500000, 0.8000000, 0.8430692, 0.3103856, 0.5906972, 0.9423094, -0.0238895, 0.8323820]
-        - [0.7000000, 0.3000000, 0.8000000, 0.8156332, 0.5191165, 0.6308346, 0.9650412, 0.1594568, 0.7991266]
-      position_plb_m:   # informational (= kp0)
-        - [0.7000, -0.3000, 0.8000]
-        - [0.7000, -0.1500, 0.8000]
-        - [0.7000, 0.0000, 0.8000]
-        - [0.7000, 0.1500, 0.8000]
-        - [0.7000, 0.3000, 0.8000]
-    circle:
-      candidate_id: C-c60z95-frontal-r25-local_mean-D35-roll0
-      keypoints_plb:   # 9-D: kp0, kp0+R[0.3,0,0], kp0+R[0,0,0.3] (PLB)
-        - [0.6000000, 0.0000000, 1.2000000, 0.8928621, 0.0592813, 1.1732134, 0.6645814, -0.2501146, 1.3525515]
-        - [0.6000000, -0.2377641, 1.0272542, 0.7873059, -0.4038367, 0.8619170, 0.6399794, -0.4236765, 1.2592850]
-        - [0.6000000, -0.1469463, 0.7477458, 0.7235081, -0.2050760, 0.4806003, 0.7527335, -0.3754073, 0.8680705]
-        - [0.6000000, 0.1469463, 0.7477458, 0.7181710, 0.2504045, 0.4921445, 0.8173655, -0.0591125, 0.7648342]
-        - [0.6000000, 0.2377641, 1.0272542, 0.7615825, 0.4464446, 0.8846233, 0.8422599, 0.0616092, 1.0439746]
-      position_plb_m:   # informational (= kp0)
-        - [0.6000, 0.0000, 1.2000]
-        - [0.6000, -0.2378, 1.0273]
-        - [0.6000, -0.1469, 0.7477]
-        - [0.6000, 0.1469, 0.7477]
-        - [0.6000, 0.2378, 1.0273]
-
-pilot:
-  seeds: [9000, 9001, 9002]
-  hold_s: 6.0
-  duration_s: 33.0
+  feasible_rows_file: E3_feasible_rows.npy        # validity screen output (all 20,000 rows)
+  feasible_rows_sha256: d7887b8802aca65a039582c74ba00a73fd53b9b49eacc002157b79b418e34a80
+  settle_hold: first_target                         # pose 0 commanded during settling

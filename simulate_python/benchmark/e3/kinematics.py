@@ -1,4 +1,6 @@
-"""Controller-independent kinematic checks for E3 v3 waypoint candidates.
+"""Controller-independent kinematic checks for E3 random full-pose targets.
+
+(Adapted from the E3 v3 module; git tag e3v3-pre-random-pose-replacement.)
 
 Pre-registered items K1-K5 (docs/E3_V3_PREREGISTRATION.md, section 3):
   K1 reachability   independent DLS IK on unitree_robots/b2wz1/ground.xml,
@@ -35,6 +37,7 @@ K2_MARGIN = 0.10
 K3_CLEAR = 0.03
 K4_SIGMA = 0.05
 K5_POS, K5_NEIGH, K5_ORI_DEG = 0.05, 0.10, 20.0
+HW_CLEAR, HW_SIGMA = 0.01, 0.02   # E3 random-pose safety screen (pre-declared)
 
 DISTAL = ("link02", "link03", "link04", "link05", "link06", "gripperStator", "gripperMover")
 SELF_DISTAL = ("link04", "link05", "link06", "gripperStator", "gripperMover")
@@ -146,6 +149,33 @@ class Kin:
         perr = float(np.linalg.norm(p_t - p))
         oerr = float(np.degrees(np.arccos(np.clip((np.trace(R_t.T @ R) - 1) / 2, -1, 1))))
         return q, perr, oerr
+
+    def solve_hw(self, p_plb, R_plb, restarts=6, rng=None):
+        """IK within HARDWARE joint limits (controller-independent feasibility).
+        Returns the best solution; also the best C3-band margin found (audit)."""
+        p_t, R_t = self.target_world(p_plb, R_plb)
+        rng = rng or np.random.default_rng(0)
+        starts = [self.q0] + [rng.uniform(self.hw_lo, self.hw_hi) for _ in range(restarts)]
+        best, band_best = None, -np.inf
+        for q0 in starts:
+            q, pe, oe = self._solve_from(p_t, R_t, q0)
+            ok = pe < K1_POS and oe < K1_ORI_DEG
+            hw_margin = float(np.min(np.minimum(q - self.hw_lo, self.hw_hi - q)))
+            if ok:
+                band_best = max(band_best, float(np.min(np.minimum(q - self.band_lo, self.band_hi - q))))
+            self._fk(q)
+            mujoco.mj_jacBody(self.m, self.d, self.jp, self.jr, self.ee)
+            J = np.vstack([self.jp[:, self.av], self.jr[:, self.av]])
+            sigma = float(np.linalg.svd(J, compute_uv=False).min())
+            clear = self.clearance() if ok else -1.0
+            key = (ok, clear >= HW_CLEAR and sigma >= HW_SIGMA, min(clear, 0.1) + sigma)
+            if best is None or key > best[0]:
+                best = (key, q, pe, oe, hw_margin, sigma, clear)
+            if ok and clear >= HW_CLEAR and sigma >= HW_SIGMA and band_best >= 0.0:
+                break
+        _, q, pe, oe, hw_margin, sigma, clear = best
+        return {"q": q, "pos_err_m": pe, "ori_err_deg": oe, "hw_margin_rad": hw_margin,
+                "sigma_min": sigma, "clearance_m": clear, "c3_band_margin_rad": band_best}
 
     def solve(self, p_plb, R_plb, q_init=None, restarts=8, rng=None):
         """Best IK solution (inside the C3 band preferred) from several starts."""

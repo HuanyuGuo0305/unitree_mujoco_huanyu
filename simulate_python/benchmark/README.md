@@ -12,17 +12,17 @@ original script **bit-for-bit** (max |difference| = 0 across `qpos`, `qvel`,
 [`docs/interface_audit.md`](docs/interface_audit.md) first: it is the Phase-A
 audit, and every design decision below traces to a section of it.
 
-> ## E3 was rebuilt from scratch as E3 v3 (2026-11-11)
+> ## E3 is the random discrete full-pose benchmark (2026-11-11)
 >
-> All earlier E3 code and data (round-2/3 E3 v1 and E3 v2) were removed; see
-> [`docs/E3_V3_CLEANUP.md`](docs/E3_V3_CLEANUP.md) (pre-cleanup code: git tag
-> `e3-pre-v3-cleanup`). The current E3 is **E3 v3**: discrete full-pose EE
-> waypoints, 5 base levels x 5 EE update intervals x 2 patterns x 3 controllers
-> x seeds 0-99 (15,000 episodes) in [`results/E3_v3/`](results/E3_v3/), code in
-> `e3v3/`, pre-registration in
-> [`docs/E3_V3_PREREGISTRATION.md`](docs/E3_V3_PREREGISTRATION.md). Statements
-> about E3 elsewhere in this README that are not in section 4 describe the
-> removed protocol.
+> E3 was redesigned four times; only the current version is active. Earlier
+> versions (v1 smooth trajectories, v2 arc-length paths, v3 fixed line/circle
+> waypoints) and their data were removed: see `docs/E3_V3_CLEANUP.md` (git tag
+> `e3-pre-v3-cleanup`) and `docs/E3_RANDOM_POSE_REPLACEMENT.md` (git tag
+> `e3v3-pre-random-pose-replacement`). Current E3: random full-pose targets from
+> the controllers' own training table, 5 base levels x 5 EE update intervals x
+> 3 controllers x seeds 0-99 (7,500 episodes); protocol `docs/E3_PROTOCOL.md`,
+> results `results/E3/`, code `e3/`. Statements about E3 elsewhere in this
+> README outside section 4 describe removed protocols.
 >
 > ## Round 3 is the canonical dataset (E1, E2)
 >
@@ -126,7 +126,7 @@ benchmark/
 ├── archive_round2.py  one-shot archival of the round-1/2 results
 ├── aggregate.py       round-1/2 statistics, CSVs, LaTeX tables
 ├── plot.py            round-1/2 figures
-├── e3v3/              E3 v3: screening, pilot, validation, analysis, figures
+├── e3/                E3 random full-pose benchmark: audit, validation, analysis, figures
 ├── publish.py         the round-2 60-seed tables and figures
 ├── select_cases.py    round-2 illustrative-case selection
 ├── compare_rounds.py  round-2: did adding seeds 30-59 change any conclusion?
@@ -356,34 +356,31 @@ driving, turning and simultaneous translation + turning.
   finite-difference estimate at the same rate is stored alongside as
   `leg_acc_rms_fd` / `arm_acc_rms_fd` for cross-checking.
 
-### E3 (v3) — dynamic whole-body coordination under discrete full-pose EE commands (C1, C3, C5)
+### E3 — random discrete full-pose dynamic whole-body coordination (C1, C3, C5)
 
-Pre-registered in `docs/E3_V3_PREREGISTRATION.md`; results and reports in
-`results/E3_v3/` (`REPRODUCIBILITY_REPORT.md`, `SCREENING_REPORT.md`,
-`CONCLUSIONS_RAL.md`, `figures/CAPTIONS.md`).
+Protocol: `docs/E3_PROTOCOL.md` (frozen before the run). Results and reports:
+`results/E3/` (`E3_VALIDATION_REPORT.md`, `E3_REPRODUCIBILITY_REPORT.md`,
+`E3_STATISTICAL_ANALYSIS.md`, `E3_CONCLUSIONS_RAL.md`, `E3_PAPER_FIGURES_INSERT.tex`).
 
-* 5 base-motion bounds B ∈ {0, 0.15, 0.30, 0.45, 0.60} (per-axis |vx|,|vy| ≤ B
-  m/s, |wz| ≤ B rad/s; existing seeded U(2,4) s piecewise-constant generator)
-  × 5 EE update intervals {Fixed, 6, 4, 3, 2} s × 2 spatial patterns (line,
-  circle) × seeds 0–99. 30 s episodes, 3 s settle on the measured initial pose.
-* Each pattern is 5 full 6-DoF waypoints (9-D PLB keypoints) switched directly,
-  without interpolation (line ping-pong, circle cyclic); start waypoint and
-  direction are counterbalanced over seeds. The waypoint sets were chosen by a
-  controller-neutral kinematic screening (`e3v3/candidates.py`) and a pilot on
-  seeds 9000–9002 (`e3v3/pilot.py`) and frozen in `configs/E3.yaml`.
-* Metrics: E1's four RMSEs (EE orientation as SO(3) geodesic RMSE in rad), the
-  two directional degradations (always with the absolute errors),
-  switch-aligned event responses (isolated vs overlapping events) and EE
-  target reaching with censoring.
+* EE targets: full 6-DoF poses drawn uniformly (with replacement) from the
+  training table `utilities/data/keypoints_plb_evaluation_filtered.npy` -- the
+  same file and sampler all three controllers were trained with -- switched by
+  sample-and-hold every T in {Fixed, 6, 4, 3, 2} s; pose 0 is held during
+  settling, so there is no command jump at t = 3 s. Every T level uses a prefix
+  of one per-seed sequence.
+* Base: B in {0, 0.15, 0.30, 0.45, 0.60}, existing U(2,4) s piecewise-constant
+  generator scaled by B (independent RNG stream).
+* Metrics: E1's four RMSEs; target reaching (0.08 m/0.35 rad and 0.04 m/0.20 rad);
+  isolated/overlapping command-switch events with baseline-subtracted excess
+  error; directional degradation always reported with absolute errors.
 
 ```bash
-python3 -m benchmark.e3v3.candidates           # kinematic screening (controller-blind)
-python3 -m benchmark.e3v3.pilot run|select|freeze
-python3 -m benchmark.e3v3.prerun_validation
+python3 -m benchmark.e3.pose_audit             # validity screen + kinematic audit (controller-blind)
+python3 -m benchmark.e3.prerun_validation
 python3 benchmark/run.py --experiment E3 --baselines C1,C3,C5 --seed-start 0 --num-seeds 100 \
-        --headless --jobs 14 --resume-missing --output-dir benchmark/results/E3_v3/raw
-python3 -m benchmark.e3v3.analyze              # validation + statistics
-python3 -m benchmark.e3v3.figures
+        --headless --jobs 14 --resume-missing --output-dir benchmark/results/E3/raw
+python3 -m benchmark.e3.analyze                # validation + statistics
+python3 -m benchmark.e3.paper_figures          # four paper figures + plotted CSVs
 ```
 
 ### E4 — world-frame EE stabilisation (C1; C3, C5 for context)

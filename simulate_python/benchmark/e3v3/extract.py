@@ -21,7 +21,8 @@ REC_TOL = {"base_xy": 0.05, "yaw": 0.05, "ee_pos": 0.01, "ee_ori": 0.05}
 TOL_PRIMARY = (0.08, 0.35)
 TOL_STRICT = (0.04, 0.20)
 TRACE_LEN = PRE + POST                   # 100 ticks, t = -0.5 ... +1.48 s
-OUTCOME_KEYS = {"wall_time_s", "git_commit", "policy_ticks", "physics_steps", "uan_calls"}
+OUTCOME_KEYS = {"wall_time_s", "git_commit", "policy_ticks", "physics_steps", "uan_calls",
+                "survived", "termination_reason", "termination_time_s", "valid_eval_duration_s"}
 
 
 def _read(path):
@@ -121,7 +122,9 @@ def extract(d, base_bound=None):
         "valid_eval_s": float(met["valid_eval_duration_s"]),
         "metrics_json_n": int(met["n_eval_samples"]),
         "meta_seed": meta["seed"], "scenario": meta["scenario"],
-        "meta_hash": _sha(json.dumps({k: v for k, v in meta.items() if k not in OUTCOME_KEYS},
+        "proto_hash": _sha(json.dumps({k: v for k, v in meta.items()
+                                      if k not in OUTCOME_KEYS | {"scenario", "condition", "seed",
+                                                                  "initial_state"}},
                                      sort_keys=True).encode()),
         "init_hash": _sha(json.dumps([meta["initial_state"]["qpos"],
                                       meta["initial_state"].get("randomization")]).encode()),
@@ -145,6 +148,8 @@ def extract(d, base_bound=None):
         out["base_bound_ok"] = bool(np.all(np.abs(cb) <= base_bound + 1e-6))
     e = tick_errors(cmd, st, ec, es)
     out["rec"] = rmse(e)
+    # post-hoc sensitivity: window 5-30 s (drops the first reach from the initial pose)
+    out["rec_from5s"] = rmse(e, slice(100, None)) if n > 100 else None
     out["json"] = {"base_xy_rmse_mps": float(met["base_vxy_rmse"]),
                    "yaw_rmse_radps": float(met["base_wz_rmse"]),
                    "ee_pos_rmse_m": float(met["ee_pos_rmse"]),

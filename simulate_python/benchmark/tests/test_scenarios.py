@@ -322,6 +322,52 @@ class TestMetricMath(unittest.TestCase):
 # ==========================================================================
 # 14. Confidence intervals
 # ==========================================================================
+class TestE3v3Waypoints(unittest.TestCase):
+    """E3 v3: discrete full-pose waypoints, fixed update interval, no interpolation."""
+
+    def setUp(self):
+        self.cfg, _ = _cfgs("E3")
+        self.wp = {p: np.asarray(self.cfg["ee"]["waypoints"][p]["keypoints_plb"], np.float32)
+                   for p in ("line", "circle")}
+
+    def test_sequences(self):
+        self.assertEqual(sc.e3v3_sequence("line", 0, 1, 10).tolist(), [0, 1, 2, 3, 4, 3, 2, 1, 0, 1])
+        self.assertEqual(sc.e3v3_sequence("line", 3, -1, 5).tolist(), [3, 2, 1, 0, 1])
+        self.assertEqual(sc.e3v3_sequence("line", 4, 1, 3).tolist(), [4, 3, 2])  # forced inward
+        self.assertEqual(sc.e3v3_sequence("circle", 1, -1, 6).tolist(), [1, 0, 4, 3, 2, 1])
+
+    def test_counterbalanced_start_and_direction(self):
+        cells = np.zeros((5, 2), int)
+        for seed in range(100):
+            st, d = sc.e3v3_start_direction(seed)
+            cells[st, 0 if d > 0 else 1] += 1
+        self.assertTrue(np.all(cells == 10))
+
+    def test_switch_timing_and_no_interpolation(self):
+        for cid, b, t, pat in E.e3_conditions(self.cfg):
+            s = E.build_e3(self.cfg, cid, 7)
+            ee = s.ee.commands
+            is_wp = (np.abs(ee[:, None, :] - self.wp[pat][None]).max(-1) == 0).any(1)
+            self.assertTrue(is_wp.all(), cid)
+            ch = np.nonzero(np.any(np.diff(ee, axis=0) != 0, axis=1))[0] + 1
+            if t is None:
+                self.assertEqual(len(ch), 0)
+            else:
+                steps = int(round(t / CONTROL_DT))
+                np.testing.assert_array_equal(ch, np.arange(steps, len(ee), steps))
+
+    def test_pairing_across_levels(self):
+        ref_ee = E.build_e3(self.cfg, "B0T3_circle", 11).ee.commands
+        ref_b = E.build_e3(self.cfg, "B2T0_line", 11).base.commands
+        for bi in range(5):
+            np.testing.assert_array_equal(E.build_e3(self.cfg, f"B{bi}T3_circle", 11).ee.commands, ref_ee)
+        for ti in range(5):
+            for pat in ("line", "circle"):
+                np.testing.assert_array_equal(E.build_e3(self.cfg, f"B2T{ti}_{pat}", 11).base.commands, ref_b)
+        self.assertTrue(np.all(E.build_e3(self.cfg, "B0T4_line", 11).base.commands == 0))
+        self.assertLessEqual(np.abs(E.build_e3(self.cfg, "B4T4_line", 11).base.commands).max(), 0.6 + 1e-6)
+
+
 class TestStatistics(unittest.TestCase):
     def test_bootstrap_ci_is_deterministic(self):
         x = np.random.default_rng(0).normal(5.0, 1.0, 30)

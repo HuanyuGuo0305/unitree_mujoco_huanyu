@@ -12,7 +12,19 @@ original script **bit-for-bit** (max |difference| = 0 across `qpos`, `qvel`,
 [`docs/interface_audit.md`](docs/interface_audit.md) first: it is the Phase-A
 audit, and every design decision below traces to a section of it.
 
-> ## Round 3 is the canonical dataset
+> ## E3 was rebuilt from scratch as E3 v3 (2026-11-11)
+>
+> All earlier E3 code and data (round-2/3 E3 v1 and E3 v2) were removed; see
+> [`docs/E3_V3_CLEANUP.md`](docs/E3_V3_CLEANUP.md) (pre-cleanup code: git tag
+> `e3-pre-v3-cleanup`). The current E3 is **E3 v3**: discrete full-pose EE
+> waypoints, 5 base levels x 5 EE update intervals x 2 patterns x 3 controllers
+> x seeds 0-99 (15,000 episodes) in [`results/E3_v3/`](results/E3_v3/), code in
+> `e3v3/`, pre-registration in
+> [`docs/E3_V3_PREREGISTRATION.md`](docs/E3_V3_PREREGISTRATION.md). Statements
+> about E3 elsewhere in this README that are not in section 4 describe the
+> removed protocol.
+>
+> ## Round 3 is the canonical dataset (E1, E2)
 >
 > **Current results: [`results/final_round3/`](results/final_round3/) and
 > [`results/final_round3/ROUND3_REPORT.md`](results/final_round3/ROUND3_REPORT.md).**
@@ -93,7 +105,6 @@ benchmark/
 │                      figures_round2.py, tables_round2.py
 ├── round3/            THE CURRENT PIPELINE
 │   ├── common.py            seed policy, episode loading, atomic writes
-│   ├── verify_e3_reuse.py   9-point per-episode check before reusing E3 data
 │   ├── export.py            per-seed CSVs + E1 per-command-interval diagnostics
 │   ├── aggregate3.py        50-seed summaries and paired comparisons
 │   ├── select3.py           illustrative-case selection (pre-declared criteria)
@@ -115,7 +126,7 @@ benchmark/
 ├── archive_round2.py  one-shot archival of the round-1/2 results
 ├── aggregate.py       round-1/2 statistics, CSVs, LaTeX tables
 ├── plot.py            round-1/2 figures
-├── analysis.py        round-2 E3 absolute tracking + paired advantage
+├── e3v3/              E3 v3: screening, pilot, validation, analysis, figures
 ├── publish.py         the round-2 60-seed tables and figures
 ├── select_cases.py    round-2 illustrative-case selection
 ├── compare_rounds.py  round-2: did adding seeds 30-59 change any conclusion?
@@ -149,8 +160,7 @@ python3 benchmark/run.py --experiment E1 --baselines C1,C3,C5 \
 python3 benchmark/run.py --experiment E2 --baselines C1,C2 \
     --seed-start 0 --num-seeds 50 --headless --jobs 6 --log-physics --resume-missing
 
-# E3 is NOT re-run: verify its 4,050 deterministic episodes instead
-python3 -m benchmark.round3.verify_e3_reuse
+# (E3 is no longer part of the round-3 pipeline; see E3 v3 in section 4)
 
 # Phases D-F -- per-seed export, statistics, selection, tables, figures
 python3 -m benchmark.round3.export
@@ -185,7 +195,6 @@ python3 benchmark/tests/test_latex_structure.py     # structural only; no LaTeX 
 ```bash
 python3 benchmark/run.py --experiment E1 --baselines C1,C3,C5 --seed-start 0 --num-seeds 3 --headless --jobs 6
 python3 benchmark/run.py --experiment E2 --baselines C1,C2   --seed-start 0 --num-seeds 3 --headless --jobs 6
-python3 benchmark/run.py --experiment E3 --baselines C1,C3,C5 --seed-start 0 --num-seeds 3 --headless --jobs 6
 python3 benchmark/run.py --experiment E4 --baselines C1       --headless
 ```
 
@@ -201,7 +210,6 @@ report seeds 0–29.
 # the full official pool; already-complete episodes are skipped
 python3 benchmark/run.py --experiment E1 --baselines C1,C3,C5 --seed-start 0 --num-seeds 60 --headless --jobs 6 --resume-missing
 python3 benchmark/run.py --experiment E2 --baselines C1,C2   --seed-start 0 --num-seeds 60 --headless --jobs 6 --resume-missing
-python3 benchmark/run.py --experiment E3 --baselines C1,C3,C5 --seed-start 0 --num-seeds 60 --headless --jobs 6 --resume-missing
 python3 benchmark/run.py --experiment E4 --baselines C1,C3,C5 --seed-start 0 --num-seeds 30 --headless --jobs 6 --resume-missing
 ```
 
@@ -222,13 +230,9 @@ fact whether any conclusion moved.
 python3 benchmark/aggregate.py --results benchmark/results/raw --tables
 python3 benchmark/plot.py      --results benchmark/results/raw
 
-# E3 absolute tracking + explicit C1-vs-C3 / C1-vs-C5 paired advantage
-python3 benchmark/analysis.py
-
 # the 60-seed official tables, the round-2 E3 figures, and the curated-case
 # tables and figures (reads the selection manifests)
 python3 benchmark/publish.py
-python3 benchmark/publish.py --per-family          # + per-family E3 supplements
 
 # did the extra seeds change anything?
 python3 benchmark/compare_rounds.py
@@ -236,11 +240,9 @@ python3 benchmark/compare_rounds.py
 # individually
 python3 benchmark/aggregate.py --experiments E1 --tables     # E1 compact IEEE table
 python3 benchmark/aggregate.py --experiments E2 --tables     # E2 comparison table
-python3 benchmark/plot.py      --experiments E3              # E3 2-D curves + 3-D surfaces
-python3 benchmark/plot.py      --experiments E3 --e3-metric base_vxy_rmse
 python3 benchmark/plot.py      --experiments E4 --seed 0 --baseline C1 --snapshots
 python3 benchmark/plot.py      --experiments E4 --seed 0 --baseline C1 --snapshots --video
-python3 benchmark/plot.py      --side-by-side E3 --condition S21_circle --seed 12
+python3 benchmark/plot.py      --side-by-side E1 --condition T4 --seed 12
 ```
 
 ### Curated illustrative seeds (figures only)
@@ -253,12 +255,9 @@ illustrative figure seed can never also be an official statistical sample.
 # simulate the candidate pool (--showcase-search reads the pool from baselines.yaml)
 python3 benchmark/run.py --experiment E1 --baselines C1,C3,C5 --showcase-search --headless --jobs 6 --resume-missing
 python3 benchmark/run.py --experiment E2 --baselines C1,C2   --showcase-search --headless --jobs 6 --resume-missing
-# E3: the three combined-motion cells plus every degradation reference cell
-python3 benchmark/run.py --experiment E3 --baselines C1,C3,C5 --showcase-search --headless --jobs 6 --resume-missing \
-    --conditions S01_line,S02_line,S10_line,S12_line,S20_line,S21_line,S22_line,S01_circle,S02_circle,S10_circle,S12_circle,S20_circle,S21_circle,S22_circle,S01_semicircle,S02_semicircle,S10_semicircle,S12_semicircle,S20_semicircle,S21_semicircle,S22_semicircle
 
 # select, then render
-python3 benchmark/select_cases.py --experiment E1 --experiment E2 --experiment E3
+python3 benchmark/select_cases.py --experiment E1 --experiment E2
 python3 benchmark/publish.py --only selected
 ```
 
@@ -357,32 +356,35 @@ driving, turning and simultaneous translation + turning.
   finite-difference estimate at the same rate is stored alongside as
   `leg_acc_rms_fd` / `arm_acc_rms_fd` for cross-checking.
 
-### E3 — dynamic whole-body coordination (C1, C3, C5) — primary experiment
+### E3 (v3) — dynamic whole-body coordination under discrete full-pose EE commands (C1, C3, C5)
 
-Full 3 × 3 matrix, `alpha_base ∈ {0, 0.5, 1}` × `alpha_ee ∈ {0, 0.5, 1}`, times
-three EE trajectory families, times 30 seeds. 20 s episodes.
+Pre-registered in `docs/E3_V3_PREREGISTRATION.md`; results and reports in
+`results/E3_v3/` (`REPRODUCIBILITY_REPORT.md`, `SCREENING_REPORT.md`,
+`CONCLUSIONS_RAL.md`, `figures/CAPTIONS.md`).
 
-* `alpha_base` scales the *same* seeded base-command waveform, so changing
-  intensity changes only the amplitude. `alpha_base = 1` is the full supported
-  range.
-* `alpha_ee` scales EE trajectory **speed** through time parameterisation.
-  Path shape, spatial amplitude (0.20 m), path centre (PLB `[0.60, 0, 0.75]`)
-  and the orientation protocol (held constant, taken from the nearest native
-  table row to the centre) are identical across every family and intensity.
-  `alpha_ee = 1` is a mean path speed of 0.40 m/s. `alpha_ee = 0` holds a
-  stationary target.
-* Velocity is continuous everywhere, reversals included (unit-test enforced:
-  max velocity jump < 0.05 m/s at 0.1 ms resolution). All path points lie
-  within 0.12 m of a native command row (1756 rows sit inside 0.20 m of the
-  centre), so the whole path is deep inside the native command support.
-* **E3 contains no discrete resampling mechanism at all** — unit-test enforced
-  (`switch_ticks` is empty and consecutive commands differ by < 0.02 m).
-* Degradation is computed **per matched seed and per matched trajectory
-  family** before any aggregation:
-  `ΔE_ee(α_b,α_e) = E_ee(α_b,α_e) − E_ee(0,α_e)` and
-  `ΔE_b(α_b,α_e) = E_b(α_b,α_e) − E_b(α_b,0)`. Absolute errors are always
-  reported alongside, so a controller with a large baseline error cannot look
-  good merely by degrading less.
+* 5 base-motion bounds B ∈ {0, 0.15, 0.30, 0.45, 0.60} (per-axis |vx|,|vy| ≤ B
+  m/s, |wz| ≤ B rad/s; existing seeded U(2,4) s piecewise-constant generator)
+  × 5 EE update intervals {Fixed, 6, 4, 3, 2} s × 2 spatial patterns (line,
+  circle) × seeds 0–99. 30 s episodes, 3 s settle on the measured initial pose.
+* Each pattern is 5 full 6-DoF waypoints (9-D PLB keypoints) switched directly,
+  without interpolation (line ping-pong, circle cyclic); start waypoint and
+  direction are counterbalanced over seeds. The waypoint sets were chosen by a
+  controller-neutral kinematic screening (`e3v3/candidates.py`) and a pilot on
+  seeds 9000–9002 (`e3v3/pilot.py`) and frozen in `configs/E3.yaml`.
+* Metrics: E1's four RMSEs (EE orientation as SO(3) geodesic RMSE in rad), the
+  two directional degradations (always with the absolute errors),
+  switch-aligned event responses (isolated vs overlapping events) and EE
+  target reaching with censoring.
+
+```bash
+python3 -m benchmark.e3v3.candidates           # kinematic screening (controller-blind)
+python3 -m benchmark.e3v3.pilot run|select|freeze
+python3 -m benchmark.e3v3.prerun_validation
+python3 benchmark/run.py --experiment E3 --baselines C1,C3,C5 --seed-start 0 --num-seeds 100 \
+        --headless --jobs 14 --resume-missing --output-dir benchmark/results/E3_v3/raw
+python3 -m benchmark.e3v3.analyze              # validation + statistics
+python3 -m benchmark.e3v3.figures
+```
 
 ### E4 — world-frame EE stabilisation (C1; C3, C5 for context)
 

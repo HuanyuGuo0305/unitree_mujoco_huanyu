@@ -127,6 +127,7 @@ benchmark/
 ├── aggregate.py       round-1/2 statistics, CSVs, LaTeX tables
 ├── plot.py            round-1/2 figures
 ├── e3/                E3 random full-pose benchmark: audit, validation, analysis, figures
+├── paper_assets/E3/   tracked copy of the final E3 figure, plotted values, statistics and reports
 ├── publish.py         the round-2 60-seed tables and figures
 ├── select_cases.py    round-2 illustrative-case selection
 ├── compare_rounds.py  round-2: did adding seeds 30-59 change any conclusion?
@@ -380,7 +381,8 @@ python3 -m benchmark.e3.prerun_validation
 python3 benchmark/run.py --experiment E3 --baselines C1,C3,C5 --seed-start 0 --num-seeds 100 \
         --headless --jobs 14 --resume-missing --output-dir benchmark/results/E3/raw
 python3 -m benchmark.e3.analyze                # validation + statistics
-python3 -m benchmark.e3.paper_figures          # four paper figures + plotted CSVs
+python3 -m benchmark.e3.positive_excess        # post-hoc event-level positive excess for Fig. E3(d)
+python3 -m benchmark.e3.paper_figures          # combined paper figure + plotted CSVs + supplementary
 ```
 
 ### E4 — world-frame EE stabilisation (C1; C3, C5 for context)

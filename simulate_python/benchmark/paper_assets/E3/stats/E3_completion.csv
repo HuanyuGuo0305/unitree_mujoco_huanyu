@@ -1,0 +1,4 @@
+controller,episodes,completed,terminated,completion_B0T0,completion_B0T1,completion_B0T2,completion_B0T3,completion_B0T4,completion_B1T0,completion_B1T1,completion_B1T2,completion_B1T3,completion_B1T4,completion_B2T0,completion_B2T1,completion_B2T2,completion_B2T3,completion_B2T4,completion_B3T0,completion_B3T1,completion_B3T2,completion_B3T3,completion_B3T4,completion_B4T0,completion_B4T1,completion_B4T2,completion_B4T3,completion_B4T4
+C1,2500,2500,0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0
+C3,2500,2484,16,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,0.99,0.99,1.0,1.0,1.0,0.97,1.0,1.0,0.97,1.0,0.99,1.0,0.99,0.96,1.0,0.99,0.99
+C5,2500,2192,308,0.99,0.99,1.0,1.0,1.0,0.99,1.0,1.0,1.0,1.0,0.88,0.88,0.89,0.9,0.9,0.81,0.77,0.73,0.81,0.82,0.74,0.69,0.67,0.68,0.78

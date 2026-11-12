@@ -9,7 +9,6 @@ Examples
         --seed-start 0 --num-seeds 3 --headless
     python3 benchmark/run.py --experiment E3 --baselines C1,C3,C5 \
         --seed-start 0 --num-seeds 3 --headless
-    python3 benchmark/run.py --experiment E4 --baselines C1 --headless
 
 Headless is the default; ``--headless`` is accepted for explicitness and
 ``--viewer`` opens the MuJoCo viewer for a single episode.
@@ -41,7 +40,7 @@ for root in (REPO_ROOT, SIM_ROOT):
 from benchmark.core.runner import EpisodeSpec, run_episode  # noqa: E402
 from benchmark.scenarios import experiments as E  # noqa: E402
 
-DEFAULT_RESULTS = os.path.join(SIM_ROOT, "benchmark", "results", "raw")
+RESULTS_DIR = os.path.join(SIM_ROOT, "benchmark", "results")   # default: results/<EXP>/raw
 
 
 def episode_dir(results_root, experiment, baseline, condition, seed):
@@ -126,7 +125,7 @@ def _worker(payload):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--experiment", required=True, choices=["E1", "E2", "E3", "E4"])
+    parser.add_argument("--experiment", required=True, choices=["E1", "E2", "E3"])
     parser.add_argument("--config", default=None, help="Override the experiment YAML")
     parser.add_argument("--baselines", default=None, help="Comma-separated, e.g. C1,C3,C5")
     parser.add_argument("--conditions", default=None, help="Comma-separated condition IDs")
@@ -135,7 +134,8 @@ def main(argv=None):
     parser.add_argument("--headless", action="store_true", help="Default; kept for explicitness")
     parser.add_argument("--viewer", action="store_true", help="Open the MuJoCo viewer (1 episode)")
     parser.add_argument("--dry-run", action="store_true", help="Generate and save commands only")
-    parser.add_argument("--output-dir", default=DEFAULT_RESULTS)
+    parser.add_argument("--output-dir", default=None,
+                        help="Episode root (default: benchmark/results/<EXPERIMENT>/raw)")
     parser.add_argument("--resume-missing", action="store_true", help="Skip completed episodes")
     parser.add_argument("--showcase-search", action="store_true",
                         help="Use the showcase candidate seed pool from baselines.yaml")
@@ -152,7 +152,7 @@ def main(argv=None):
         print(f"[showcase] candidate seed pool {args.seed_start}-{args.seed_start+args.num_seeds-1}")
 
     jobs, baselines, conditions, seeds = build_job_list(args, exp_cfg)
-    results_root = os.path.abspath(args.output_dir)
+    results_root = os.path.abspath(args.output_dir or os.path.join(RESULTS_DIR, args.experiment, "raw"))
     os.makedirs(results_root, exist_ok=True)
 
     print("=" * 78)

@@ -1,0 +1,45 @@
+# E2 -- Wheeled-legged vs legged actuation: efficiency and smoothness (official since
+# 2026-11-12). Replaces the E1-matched T1-T4 E2 (configs/E2_e1protocol.yaml) and the
+# round-3 E2 (configs/E2_round3.yaml), both archived under results/archive/.
+#
+#   Wheeled-Legged = C1: unified whole-body PPO, wheeled B2W+Z1 (ground.xml; 4 wheel
+#                    velocity servos; 22-D action).
+#   Legged         = C2: the same framework trained separately on the locked-wheel
+#                    model (b2wz1_legged.xml; wheels welded to the calves; 18-D action).
+#   Existing checkpoints and deploy configs, unchanged (no retraining, same gains,
+#   physics, UAN arm actuator, EE frame and command table).
+#
+# ONE dynamic condition, 100 paired seeds (0-99), 200 episodes:
+#   base  : every U(2, 3) s, independent uniform draw per axis (vx, vy, yaw rate) within
+#           baselines.yaml base_command_limits = the shared WBC training range
+#           [0.6 m/s, 0.6 m/s, 0.6 rad/s]; piecewise constant (E1's generator).
+#   EE    : every U(3, 5) s, a full 6-DoF pose (9-D PLB keypoint row) drawn uniformly
+#           from the native training keypoint table; applied directly, no interpolation.
+#   The two schedules use independent seeded RNG streams; both depend on the seed alone,
+#   so both modes replay identical commands. Settling 0-3 s (zero base command, measured
+#   initial EE pose), evaluation 3-30 s.
+
+experiment: E2
+baselines: [C1, C2]
+mode_labels: {C1: Wheeled-Legged, C2: Legged}
+duration_s: 30.0
+settle_s: null            # -> baselines.yaml 3.0
+seeds: {start: 0, count: 100}
+
+conditions:
+  dynamic: {base: random, ee: random_interval}
+
+base:
+  segment_duration_range: [2.0, 3.0]
+  intensity: 1.0          # full shared training range (limits from baselines.yaml)
+ee:
+  interval_range_s: [3.0, 5.0]
+  sampling: uniform over native keypoint table rows
+  interpolation: none
+
+# Primary metrics (e2/analyze.py; window [3, 30) s):
+#  1 P_avg   = mean over 250 Hz steps of sum_j |tau_j qdot_j| (d.actuator_force, d.qvel),
+#              j in leg(12) + arm(6) + gripper(1) [+ wheel(4)]; core/recorder.py online.
+#  2 E/prog  = (P_avg x T_valid) / realized progress along the commanded planar direction.
+#  3 a_arm   = mean |d.qacc| over 250 Hz steps and 6 arm joints (physics log).
+#  4 a_leg   = mean |d.qacc| over 250 Hz steps and 12 leg joints (wheels excluded).

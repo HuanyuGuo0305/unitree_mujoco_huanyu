@@ -3,7 +3,7 @@
 `results/` is excluded from git, so this folder holds a tracked copy of the final E3 paper figure and the outputs it depends on.
 
 **Contents:**
-- `figures/`: the final combined figure (PDF and PNG), its exact plotted values, the unmatched-event sensitivity, and `FIGURE_VALIDATION.md`.
+- `figures/`: the active figure `wbc_coordination_1x4_stacked` (one row of four groups, each with two stacked subplots; PDF, SVG and 600 dpi PNG), its exact plotted values, the unmatched-event sensitivity, and `FIGURE_VALIDATION.md`.
 - `figures/supplementary/`: the signed vs positive excess diagnostic figure.
 - `stats/`: all E3 statistics CSVs.
 - `validation/`: the post-run and positive-excess check JSONs.

@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
-"""Unit tests for the round-3 protocol changes and the round-3 analysis code.
+"""Unit tests for the E1 command protocol, cross-baseline command identity, the
+statistics conventions and the atomic writers (tests the CODE and CONFIG, not results).
 
-These test the CODE and the CONFIG, not the measured results. The measured
-results are checked by ``round3/validate.py``, which reads the actual output
-files.
-
-Run:  python3 benchmark/tests/test_round3_protocol.py
+Run:  python3 -m unittest benchmark.tests.test_protocol     (from simulate_python/)
 """
 
 from __future__ import annotations
@@ -23,7 +20,7 @@ for _root in (REPO_ROOT, SIM_ROOT):
         sys.path.insert(0, _root)
 
 from benchmark.core import stats  # noqa: E402
-from benchmark.round3 import common, export, select3  # noqa: E402
+from benchmark.round3 import common  # noqa: E402
 from benchmark.scenarios import experiments as E  # noqa: E402
 
 DT = 0.02
@@ -125,70 +122,13 @@ class TestE1EEResampling(unittest.TestCase):
             )
 
 
-class TestE2Envelopes(unittest.TestCase):
-    """Validation item 4: the new 0.20 / 0.40 / 0.60 per-axis envelopes."""
-
-    def test_axis_limits(self):
-        cfg = _cfg("E2")
-        for name, alpha in (("Low", 0.20), ("Medium", 0.40), ("High", 0.60)):
-            self.assertEqual(E.e2_axis_limits(cfg, name), [alpha, alpha, alpha])
-
-    def test_commands_respect_each_axis_separately(self):
-        cfg = _cfg("E2")
-        for name, alpha in (("Low", 0.20), ("Medium", 0.40), ("High", 0.60)):
-            for seed in range(0, 50, 11):
-                cmd = E.build_e2(cfg, name, seed).base.commands
-                self.assertLessEqual(float(np.abs(cmd).max()), alpha + 1e-6)
-
-    def test_envelope_is_per_axis_not_a_norm_bound(self):
-        """A translate+turn segment may command |vx| = |vy| near the limit at
-        the same time, so the XY norm can exceed the per-axis value. That is
-        intended; this pins it so a future 'fix' cannot silently add a norm
-        constraint the brief did not ask for."""
-        cfg = _cfg("E2")
-        worst = 0.0
-        for seed in range(50):
-            cmd = E.build_e2(cfg, "High", seed).base.commands
-            worst = max(worst, float(np.hypot(cmd[:, 0], cmd[:, 1]).max()))
-        self.assertGreater(worst, 0.60 + 1e-6)
-
-    def test_scaling_changes_only_the_amplitude(self):
-        """At one seed the three intensities must be the SAME waveform."""
-        cfg = _cfg("E2")
-        lo = E.build_e2(cfg, "Low", 4).base.commands
-        hi = E.build_e2(cfg, "High", 4).base.commands
-        self.assertTrue(np.allclose(hi * (0.20 / 0.60), lo, atol=1e-6))
-
-    def test_rejects_an_envelope_outside_the_shared_supported_range(self):
-        cfg = _cfg("E2")
-        bad = {k: dict(v) for k, v in cfg["base"]["motion_intensity"].items()}
-        bad["High"]["max_abs_vx_mps"] = 0.9
-        cfg = dict(cfg)
-        cfg["base"] = dict(cfg["base"], motion_intensity=bad)
-        with self.assertRaises(ValueError):
-            E.e2_axis_limits(cfg, "High")
-
-
-class TestSeedPolicy(unittest.TestCase):
-    """Validation item 6: exactly 50 official seeds, 0-49."""
-
-    def test_official_pool_is_zero_to_fortynine(self):
-        seeds = common.official_seeds()
-        self.assertEqual(len(seeds), 50)
-        self.assertEqual(seeds[0], 0)
-        self.assertEqual(seeds[-1], 49)
-
-    def test_official_and_showcase_pools_are_disjoint(self):
-        self.assertFalse(set(common.official_seeds()) & set(common.showcase_seeds()))
-
-
 class TestIdenticalCommandsAcrossBaselines(unittest.TestCase):
     """Validation item 7: the schedule depends on (experiment, condition, seed)
     only, so every compared baseline is handed bit-identical commands."""
 
     def test_schedules_are_a_function_of_condition_and_seed_alone(self):
-        for experiment, conditions in (("E1", ("T1", "T4")),
-                                       ("E2", ("Low", "High"))):
+        for experiment, conditions in (("E1", ("T1", "T4")), ("E2", ("dynamic",)),
+                                       ("E3", ("B0T0", "B4T4"))):
             cfg = _cfg(experiment)
             for condition in conditions:
                 a = E.build_scenario(experiment, cfg, condition, 9).arrays()
@@ -205,46 +145,6 @@ class TestIdenticalCommandsAcrossBaselines(unittest.TestCase):
             a = E.build_e1(cfg, still, 6).base.commands
             b = E.build_e1(cfg, moving, 6).base.commands
             self.assertTrue(np.array_equal(a, b))
-
-
-class TestIntervalDiagnostics(unittest.TestCase):
-    """Validation item 8: the full-window RMSE includes the switch transients."""
-
-    def test_intervals_tile_the_window_without_gaps_or_overlap(self):
-        arr = {
-            "t": np.arange(10) * DT + 3.0,
-            "vx_cmd": np.array([1, 1, 1, 2, 2, 2, 2, 3, 3, 3], dtype=float),
-            "vy_cmd": np.zeros(10), "wz_cmd": np.zeros(10),
-            "ee_cmd_kp": np.zeros((10, 9)),
-        }
-        bounds = export._interval_bounds(arr, "base_segment")
-        self.assertEqual(bounds, [(0, 3), (3, 7), (7, 10)])
-        self.assertEqual(sum(e - s for s, e in bounds), 10)
-
-    def test_first_interval_starts_at_the_window_opening(self):
-        arr = {
-            "t": np.arange(6) * DT + 3.0,
-            "vx_cmd": np.array([5, 5, 7, 7, 7, 7], dtype=float),
-            "vy_cmd": np.zeros(6), "wz_cmd": np.zeros(6),
-            "ee_cmd_kp": np.zeros((6, 9)),
-        }
-        bounds = export._interval_bounds(arr, "base_segment")
-        self.assertEqual(bounds[0][0], 0)
-
-    def test_weighted_recombination_reproduces_the_full_window_rmse(self):
-        """The ONLY correct way to recombine interval RMSEs is the
-        sample-count-weighted quadratic mean. An unweighted mean does not
-        reproduce the full-window value, which is why the headline metric is
-        never an unweighted average of intervals."""
-        rng = np.random.default_rng(0)
-        err = rng.normal(0, 1, 100)
-        bounds = [(0, 30), (30, 55), (55, 100)]
-        full = np.sqrt(np.mean(err**2))
-        per = [np.sqrt(np.mean(err[s:e] ** 2)) for s, e in bounds]
-        ns = [e - s for s, e in bounds]
-        weighted = np.sqrt(sum(n * r**2 for n, r in zip(ns, per)) / sum(ns))
-        self.assertAlmostEqual(weighted, full, places=12)
-        self.assertNotAlmostEqual(float(np.mean(per)), full, places=3)
 
 
 class TestStatisticsConventions(unittest.TestCase):
@@ -268,54 +168,6 @@ class TestStatisticsConventions(unittest.TestCase):
         a = stats.bootstrap_ci(values, 10000, 20261106)
         b = stats.bootstrap_ci(values, 10000, 20261106)
         self.assertEqual(a, b)
-
-
-class TestSelectionProcedure(unittest.TestCase):
-    def test_advantage_requires_beating_every_rival(self):
-        pb = {"C1": {"m": 1.0}, "C3": {"m": 2.0}, "C5": {"m": 0.5}}
-        self.assertEqual(select3._advantage(pb, "m", ["C3", "C5"]), -0.5)
-
-    def test_min_combine_cannot_be_carried_by_one_term(self):
-        case = {"terms": [("a", 1.0), ("b", 1.0)], "combine": "min"}
-        pb = {"C1": {"a": 0.0, "b": 1.0}, "C3": {"a": 100.0, "b": 0.9}}
-        score, _ = select3._score(case, pb, ["C3"], {"a": 1.0, "b": 1.0})
-        self.assertAlmostEqual(score, -0.1)
-
-    def test_require_negative_gate_selects_a_contradicting_trial(self):
-        """The E2 trade-off criterion must REJECT a trial where C1 also wins
-        on tracking -- it exists to surface a case that contradicts a uniform
-        C1 advantage."""
-        case = {"terms": [("p", 1.0)], "combine": "mean",
-                "require_positive": ["p"], "require_negative": ["t"]}
-        scale = {"p": 1.0, "t": 1.0}
-        good = {"C1": {"p": 1.0, "t": 2.0, "survived": 1},
-                "C2": {"p": 2.0, "t": 1.0, "survived": 1}}
-        bad = {"C1": {"p": 1.0, "t": 1.0, "survived": 1},
-               "C2": {"p": 2.0, "t": 2.0, "survived": 1}}
-        cfg = {"min_base_segments": 0, "min_ee_switches": 0,
-               "min_rms_fraction_of_condition_median": 0.0}
-        _s, terms = select3._score(case, good, ["C2"], scale)
-        self.assertEqual(select3._gates(case, good, ["C2"], None, scale, cfg, terms), [])
-        _s, terms = select3._score(case, bad, ["C2"], scale)
-        self.assertTrue(any("require_negative" in r for r in
-                            select3._gates(case, bad, ["C2"], None, scale, cfg, terms)))
-
-    def test_terminated_episode_is_gated_out(self):
-        case = {"terms": [("m", 1.0)], "combine": "mean", "require_positive": []}
-        pb = {"C1": {"m": 1.0, "survived": 1, "termination_reason": "completed"},
-              "C3": {"m": 2.0, "survived": 0, "termination_reason": "base_height"}}
-        cfg = {"min_base_segments": 0, "min_ee_switches": 0,
-               "min_rms_fraction_of_condition_median": 0.0}
-        _s, terms = select3._score(case, pb, ["C3"], {"m": 1.0})
-        self.assertTrue(any(r.startswith("G1_") for r in
-                            select3._gates(case, pb, ["C3"], None, {"m": 1.0}, cfg, terms)))
-
-    def test_nontriviality_threshold_is_condition_relative(self):
-        """An ABSOLUTE commanded-motion cut would reject a whole low-intensity
-        condition by construction; the round-2 build did exactly that. The rule
-        must compare against the condition's own pool median."""
-        self.assertIn("min_rms_fraction_of_condition_median", select3.NONTRIVIAL["E1"])
-        self.assertIn("min_rms_fraction_of_condition_median", select3.NONTRIVIAL["E2"])
 
 
 class TestAtomicWrites(unittest.TestCase):

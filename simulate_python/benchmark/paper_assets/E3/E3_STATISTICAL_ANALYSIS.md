@@ -133,18 +133,66 @@ At B > 0 the EE-frequency effect on base error is small for every controller (|�
 - **Baseline windows:** directions unchanged. The C5-vs-C1 orientation integrated excess, which is not significant with the registered window, is borderline with [−0.24, 0) s (CI lower bound 0.0000) and spans 0 with [−1.0, 0) s.
 - **Pose-0 height tertiles** (unmatched events): C1's lower position excess holds in every tertile against both rivals, and its lower orientation excess against C3 in every tertile. Orientation integrated excess against C5 spans 0 in all tertiles, and the peak spans 0 in the lowest tertile.
 
-**Post-hoc presentation: event-level positive excess** (`e3/positive_excess.py`, `stats/E3_base_event_positive_excess.csv`). For each matched switch, δe⁺ᵢ(t) = max(eᵢ(t) − ēᵢ,pre, 0), where ēᵢ,pre is the switch's own [−0.5, 0) s mean. The positive part is taken before averaging over events within a seed. Means are over 90 seeds, with paired seed bootstrap.
+**Post-hoc presentation: event-level positive excess for both cross-task panels**
 
-| EE position, B = 0.60 | C1 | C3 | C5 | C3 − C1 [95 % CI] | C5 − C1 [95 % CI] |
+Sources: `e3/positive_excess.py`, `stats/E3_event_positive_excess.csv` and `stats/E3_event_positive_excess_curves_main.csv`.
+
+**Definition.** The same definition is used for Fig. E3(c) (base XY after EE switches) and Fig. E3(d) (EE position after base switches):
+- For each matched switch, δe⁺ᵢ(t) = max(eᵢ(t) − ēᵢ,pre, 0), where ēᵢ,pre is that switch's own mean over [−0.5, 0) s.
+- The positive part is taken per event, before averaging. Events are averaged within each seed, and seeds are bootstrapped with pairing.
+- δe⁺ measures **increases** in tracking error above the pre-switch level. It is not a total disturbance magnitude.
+- Because fluctuations are rectified, δe⁺ is nonzero even with no systematic change. A controller whose error fluctuates more after the switch therefore scores higher even if its mean error does not rise.
+
+| Quantity | Status |
+|---|---|
+| Mean per-event peak E[maxₜ δe⁺] | Official formal metric (`*_peak_pos_excess`); recomputed exactly |
+| Integrated positive excess Σₜ δe⁺·dt over [0, 1.5) s | Official formal metric (`*_int_pos_excess`); recomputed exactly |
+| Peak of the plotted mean curve maxₜ E[δe⁺] | New, descriptive; paired seed bootstrap of the difference of maxima |
+| Sub-window means (0–0.5, 0.5–1.0, 1.0–1.5 s) | New, descriptive, post-hoc; no multiplicity correction |
+
+The two peak quantities differ: maxₜ E[δe⁺] ≠ E[maxₜ δe⁺]. Their difference is reported, never their equality.
+
+**Fig. E3(c): base XY after EE switches** (B = 0, T = 2 s; 1,200 matched switches in 100 seeds)
+
+| | C1 | C3 | C5 | C3 − C1 [95 % CI] | C5 − C1 [95 % CI] |
 |---|---|---|---|---|---|
-| Mean per-event peak, E[maxₜ δe⁺] (m), formal | 0.0118 | 0.0201 | 0.0171 | 0.0083 [0.0070, 0.0097] | 0.0053 [0.0040, 0.0066] |
-| Mean positive excess over [0, 1.5) s (m) = integral / 1.5 s, formal | 0.0039 | 0.0070 | 0.0060 | 0.0032 [0.0025, 0.0038] | 0.0021 [0.0014, 0.0028] |
-| Maximum of the mean curve, maxₜ E[δe⁺] (m), descriptive | 0.0057 | 0.0106 | 0.0079 | 0.0049 [0.0038, 0.0060] | 0.0022 [0.0009, 0.0036] |
+| Mean per-event peak (m/s), formal | 0.0388 | **0.0320** | 0.0706 | −0.0068 [−0.0084, −0.0052], C3 lower (Holm) | 0.0318 [0.0294, 0.0342], C1 lower |
+| Integrated (m), formal | **0.0174** | 0.0179 | 0.0355 | 0.0006 [−0.0005, 0.0017], n.s. | 0.0182 [0.0168, 0.0195], C1 lower |
+| Peak of mean curve (m/s), descriptive | 0.0269 | **0.0171** | 0.0342 | −0.0098 [−0.0114, −0.0082] | 0.0073 [0.0049, 0.0097] |
+| Mean over 0–0.5 s (m/s), descriptive | 0.0177 | **0.0128** | 0.0238 | −0.0049 [−0.0059, −0.0039] | 0.0061 [0.0048, 0.0074] |
+| Mean over 0.5–1.0 s (m/s), descriptive | **0.0095** | 0.0121 | 0.0281 | 0.0026 [0.0016, 0.0036] | 0.0186 [0.0172, 0.0200] |
+| Mean over 1.0–1.5 s (m/s), descriptive | **0.0076** | 0.0111 | 0.0192 | 0.0035 [0.0027, 0.0042] | 0.0116 [0.0104, 0.0128] |
+| Pre-switch level of the curve (m/s), rectified floor | 0.0012 | 0.0023 | 0.0037 | | |
 
-- **Recomputation:** the first two rows are recomputed from the event-level logs. They equal the official `ee_pos_peak_pos_excess` and `ee_pos_int_pos_excess` exactly (`validation/positive_excess_checks.json`). Their Holm verdicts are the official ones, "C1 lower than both".
-- **Curve maximum:** the third row is new and descriptive, with no Holm correction. Its CI is a paired seed bootstrap of the difference of curve maxima.
-- **Other levels:** at B = 0.15–0.45 the ordering by curve maximum is the same, C1 lowest, with CIs of the differences excluding 0.
-- **Signed curves:** the signed curves remain available in the supplementary figure and in `stats/E3_base_event_positive_excess_curves_B4T0.csv`.
+**Fig. E3(d): EE position after base switches** (B = 0.60, EE fixed; 652 matched switches in 90 seeds)
+
+| | C1 | C3 | C5 | C3 − C1 [95 % CI] | C5 − C1 [95 % CI] |
+|---|---|---|---|---|---|
+| Mean per-event peak (m), formal | **0.0118** | 0.0201 | 0.0171 | 0.0083 [0.0070, 0.0097], C1 lower (Holm) | 0.0053 [0.0040, 0.0066], C1 lower |
+| Integrated (m·s), formal | **0.0058** | 0.0106 | 0.0090 | 0.0048 [0.0038, 0.0057], C1 lower | 0.0031 [0.0021, 0.0043], C1 lower |
+| Peak of mean curve (m), descriptive | **0.0057** | 0.0106 | 0.0079 | 0.0049 [0.0038, 0.0060] | 0.0022 [0.0009, 0.0036] |
+
+**How the rankings change against the signed-mean presentation**
+
+- **Fig. E3(c), base XY.** The signed-mean curve, used in figure versions v1–v3, showed RL+IK lowest throughout the response: its signed integral is lower than C1's by 0.0052 m [0.0035, 0.0068] (descriptive). With the positive part taken per event, this changes:
+  - **The ranking is time-dependent.** RL+IK is lower only in the first 0.5 s, which contains the peak. C1 is lower from 0.48 s onwards.
+  - **Integrated:** C1 and RL+IK are not significantly different. The official formal verdict is unchanged.
+  - **Peak:** RL+IK still has the lower peak, both per event and on the curve.
+  - **Cooperative RL** is highest at almost all times. C1 exceeds it only during 0.06–0.18 s, where C1's earlier rise leads.
+  - **Interpretation:** RL+IK's late positive excess (about 0.011 m/s) far exceeds its late signed mean (about 0.0014 m/s). This means its base error rises after some switches and falls after others. The lowest late increase therefore belongs to C1, but part of every late value is the rectified fluctuation (see the pre-switch floors).
+- **Fig. E3(d), EE position.** The signed mean made Cooperative RL look near zero. Under positive excess, C1 is lowest and RL+IK highest, consistent with the formal metrics (see §3 robustness).
+- **Not plotted:** the yaw and EE-orientation positive excess are in the CSV only. For yaw after EE switches, the peak of Cooperative RL's mean curve is the lowest (0.039 vs 0.062 rad/s for C1), although its mean per-event peak is the highest (0.101 vs 0.077). This is a further example of max E ≠ E max.
+
+**Recomputation checks** (`validation/positive_excess_checks.json`), at all eight event conditions (B0T1–B0T4, B1T0–B4T0):
+- the raw traces equal the stored matched traces;
+- the signed per-event-baseline means equal the stored excess (≤ 7e-16);
+- the per-event peak and integral equal the official metrics (≤ 4e-17).
+
+**Other levels.** By curve maximum:
+- base XY at T = 6, 4 and 3 s: RL+IK lower than C1, and C1 lower than Cooperative RL, all with CIs excluding 0;
+- EE position at B = 0.15–0.45: C1 lowest, with CIs excluding 0.
+
+**Signed curves** remain available in the supplementary figures and the curves CSV.
 
 ## 4. Pre-registered vs post-hoc
 
@@ -152,7 +200,7 @@ At B > 0 the EE-frequency effect on base error is small for every controller (|�
 
 **Added after the run** (decided after the RMSE results but before the event results were computed):
 - the **matched-event restriction** of the event statistics and Fig. E3(c)–(d), because C5's falls truncate its event sets; the unmatched all-event results are retained as sensitivity;
-- the **event-level positive-excess visualisation** in Fig. E3(d), lower panel, together with its curve-maximum statistic. It was chosen after inspecting the signed-mean figure, in which opposite-sign responses cancelled. The official metrics are unchanged;
+- the **event-level positive-excess visualisation** in both cross-task panels, now Fig. E3(c) and (d). This includes the curve-maximum and sub-window statistics. It was chosen after inspecting the signed-mean figures, in which opposite-sign responses cancelled. The official metrics are unchanged;
 - **membership of the formal Holm families** for events: positive-excess peak/integral and recovery of the disturbed signals, the EE response (mean and residual) for EE→base, and the absolute pre-switch EE error for base→EE. The protocol defined these quantities but did not list the family members.
 
 ## 5. Files
@@ -170,4 +218,4 @@ At B > 0 the EE-frequency effect on base error is small for every controller (|�
 | `stats/E3_sensitivity_completed_only.csv` | Completed-only sensitivity |
 | `stats/E3_completion.csv` | Completion per controller and cell |
 | `stats/E3_target_jump_audit.csv` | Target jump audit |
-| `stats/E3_base_event_positive_excess.csv`, `stats/E3_base_event_positive_excess_curves_B4T0.csv` | Post-hoc event-level positive excess (base switches), paired |
+| `stats/E3_event_positive_excess.csv`, `stats/E3_event_positive_excess_curves_main.csv` | Post-hoc event-level positive excess (EE and base switches, all levels), paired; main-condition curves |

@@ -29,7 +29,7 @@ from benchmark.core import frames
 
 BENCH = common.BENCH
 XML = os.path.join(REPO_ROOT, "unitree_robots", "b2wz1", "ground.xml")
-E1RAW = os.path.join(BENCH, "results", "raw", "E1")
+E1RAW = os.path.join(BENCH, "results", "E1", "raw", "E1")   # moved here in the 2026-11-12 cleanup
 CONTROLLERS = ("C1", "C3", "C5")
 
 K1_POS, K1_ORI_DEG = 1e-3, 0.5

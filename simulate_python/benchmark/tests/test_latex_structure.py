@@ -23,12 +23,13 @@ import os
 import re
 import sys
 
-# Round 3 is the canonical output tree. The round-1/2 tables now live under
-# results/archive_round2/; pass directories on the command line to check those.
+# Default: the official LaTeX outputs of the final benchmark (E1 table, E3 figure insert).
+# Pass directories on the command line to check others.
 _RESULTS = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "results"))
 DEFAULT_DIRS = [
-    os.path.join(_RESULTS, "final_round3", "tables"),
-    os.path.join(_RESULTS, "final_round3", "showcase"),
+    os.path.join(_RESULTS, "E1"),
+    os.path.join(_RESULTS, "E3"),
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "paper_assets", "E3")),
 ]
 
 ENV = re.compile(r"\\(begin|end)\{([A-Za-z*]+)\}")
@@ -112,8 +113,10 @@ def check_file(path: str) -> list[str]:
     # emit by accident from a data value such as an E3 condition ID
     # (``S02_circle``) or a case name. Scan only the text-mode spans.
     # Arguments of \label / \ref / \eqref / \cref are key strings, where "_"
-    # is legal; blank them before scanning for a stray underscore.
+    # is legal, as it is in an \includegraphics file path; blank them before
+    # scanning for a stray underscore.
     scan = re.sub(r"\\(label|ref|eqref|cref|Cref|autoref)\{[^}]*\}", "", text)
+    scan = re.sub(r"\\includegraphics(\[[^\]]*\])?\{[^}]*\}", "", scan)
     for span in _text_mode_spans(scan):
         for match in re.finditer(r"(?<!\\)_", span):
             errors.append(

@@ -447,21 +447,9 @@ class TestSeedPolicy(unittest.TestCase):
             "statistical sample",
         )
 
-    def test_aggregate_restricts_to_official_seeds(self):
-        from benchmark import aggregate
-
-        rows = [
-            {"seed": s, "baseline": "C1", "condition": "T1", "experiment": "E1",
-             "ee_pos_rmse": 0.1, "survived": 1}
-            for s in range(100)
-        ]
-        official = aggregate.filter_official(rows, 0, 30)
-        self.assertEqual(len(official), 30)
-        self.assertEqual(max(r["seed"] for r in official), 29)
-
 
 # ==========================================================================
-# E1/E2/E4 scenario-level checks
+# E1 scenario-level checks (E2: tests/test_e2.py; E3: TestE3RandomPose above)
 # ==========================================================================
 class TestExperimentConfigs(unittest.TestCase):
     def test_e1_conditions_cover_the_2x2(self):
@@ -477,56 +465,6 @@ class TestExperimentConfigs(unittest.TestCase):
         for condition in ("T1", "T2"):
             s = E.build_e1(cfg, condition, 0)
             self.assertEqual(float(np.abs(s.base.commands).max()), 0.0)
-
-    def test_e2_motion_intensity_envelopes(self):
-        """Round 3 states E2's intensities as per-axis ABSOLUTE envelopes.
-
-        Rounds 1-2 declared them as fractions 0.25/0.50/0.75 of the 0.6 shared
-        range (= 0.15/0.30/0.45). Round 3 replaced that with explicit
-        0.20/0.40/0.60 in m/s and rad/s, so this test now reads the envelope
-        rather than the fraction. The limits are per axis, not a bound on the
-        XY norm, which is why each axis is checked separately.
-        """
-        cfg, _ = _cfgs("E2")
-        want = {"Low": 0.20, "Medium": 0.40, "High": 0.60}
-        for name, alpha in want.items():
-            self.assertEqual(E.e2_axis_limits(cfg, name), [alpha, alpha, alpha])
-            s = E.build_e2(cfg, name, 0)
-            per_axis_max = np.abs(s.base.commands).max(axis=0)
-            for axis in range(3):
-                self.assertLessEqual(float(per_axis_max[axis]), alpha + 1e-6)
-
-    def test_e2_envelope_never_exceeds_the_shared_supported_range(self):
-        cfg, _ = _cfgs("E2")
-        shared = np.asarray(cfg["base_command_limits"], dtype=float)
-        for name in ("Low", "Medium", "High"):
-            axis = np.asarray(E.e2_axis_limits(cfg, name), dtype=float)
-            self.assertTrue(bool(np.all(axis <= shared + 1e-12)))
-
-    def test_e2_covers_all_three_motion_patterns(self):
-        cfg, _ = _cfgs("E2")
-        s = E.build_e2(cfg, "Medium", 0)
-        segments = []
-        for start in s.base.switch_ticks:
-            segments.append(s.base.waveform[int(start)])
-        kinds = set()
-        for seg in segments:
-            vx, vy, wz = (abs(v) > 1e-9 for v in seg)
-            if vx and not vy and not wz:
-                kinds.add("straight")
-            elif wz and not vx and not vy:
-                kinds.add("turn")
-            elif vx and wz:
-                kinds.add("translate_turn")
-        self.assertEqual(kinds, {"straight", "turn", "translate_turn"})
-
-    def test_e4_base_schedule_is_bounded_and_phased(self):
-        cfg, _ = _cfgs("E4")
-        s = E.build_e4(cfg, "chicken_head", 0)
-        limits = np.asarray(cfg["base_command_limits"])
-        bound = float(cfg["base"]["amplitude"]) * limits.max()
-        self.assertLessEqual(float(np.abs(s.base.commands).max()), bound + 1e-6)
-        self.assertEqual(len(s.base.switch_ticks), len(cfg["base"]["phases"]))
 
 
 # ==========================================================================

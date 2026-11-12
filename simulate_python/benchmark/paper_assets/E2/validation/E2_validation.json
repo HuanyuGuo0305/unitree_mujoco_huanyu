@@ -1,0 +1,90 @@
+{
+  "protocol": "E2 official: one dynamic condition, seeds 0-99, modes C1 (Wheeled-Legged), C2 (Legged)",
+  "n_episodes": 200,
+  "n_pairs": 100,
+  "n_failed": 0,
+  "failures": [],
+  "window_s": [
+    3.0,
+    30.0
+  ],
+  "n_physics_samples_completed": [
+    6751
+  ],
+  "valid_eval_duration_s_completed": [
+    27.0
+  ],
+  "commands_identical_between_modes": "100/100",
+  "commands_equal_pregenerated_protocol_file": "100/100",
+  "commands_regenerated_bit_identical": "100/100",
+  "applied_commands_equal_schedule_both_modes": "200/200 (asserted)",
+  "base_command_max_abs_per_axis": [
+    0.5992640852928162,
+    0.5993608236312866,
+    0.5997344255447388
+  ],
+  "base_command_limits": [
+    0.6,
+    0.6,
+    0.6
+  ],
+  "base_commands_within_training_range": true,
+  "ee_targets_are_training_table_rows": true,
+  "ee_command_table_sha256": "d822f1109b229c64c4d716f1803a5aa0751f30748249f7b56c63fb117bf5c328",
+  "initial_state_common_joints_compared": 19,
+  "initial_state_max_abs_diff_base_pose_and_common_joints": 0.0,
+  "initial_randomization_identical": "100/100",
+  "power_reconstruction_max_rel_err": 1.406167106578316e-09,
+  "power_components": "leg(12) + arm(6) + gripper(1) + wheel(4, Wheeled-Legged only)",
+  "wheel_power_legged_max_w": 0.0,
+  "wheel_power_wheeled_legged_min_w": 18.64342447426022,
+  "gripper_power_max_w": 0.0003800577630933129,
+  "qacc_log_vs_online_rms_max_rel_err": 1.0396865141438732e-08,
+  "qacc_vs_finite_difference": {
+    "Wheeled-Legged_arm": {
+      "median_rel_diff": 0.00038429491420547096,
+      "max_abs_rel_diff": 0.00275612349817764,
+      "pearson_r": 0.9999876244428595
+    },
+    "Wheeled-Legged_leg": {
+      "median_rel_diff": -0.007185000174233746,
+      "max_abs_rel_diff": 0.01056831222804255,
+      "pearson_r": 0.9999455436278832
+    },
+    "Legged_arm": {
+      "median_rel_diff": 0.00011853755162285358,
+      "max_abs_rel_diff": 0.00013403056338781775,
+      "pearson_r": 0.9999999966553446
+    },
+    "Legged_leg": {
+      "median_rel_diff": 0.00014742425553700473,
+      "max_abs_rel_diff": 0.0001477581834397186,
+      "pearson_r": 0.99999999999747
+    }
+  },
+  "progress_checks": {
+    "Wheeled-Legged": {
+      "min_progress_m": 8.568809547523243,
+      "all_progress_positive": true,
+      "max_rel_diff_yawframe_vs_body": 0.01985745843060238,
+      "max_rel_diff_position_vs_body": 0.023959016361717378,
+      "median_rel_diff_position_vs_body": 0.009639185401286277,
+      "zero_planar_command_ticks_total": 0,
+      "min_planar_command_speed_mps": 0.02442286873781548,
+      "mean_frac_ticks_negative_progress": 0.02082962962962963,
+      "mean_progress_share_first_0p5s_after_base_switch": 0.15505604903990208
+    },
+    "Legged": {
+      "min_progress_m": 7.833743579637732,
+      "all_progress_positive": true,
+      "max_rel_diff_yawframe_vs_body": 0.016080824707207064,
+      "max_rel_diff_position_vs_body": 0.021173805918547117,
+      "median_rel_diff_position_vs_body": 0.007132299578433976,
+      "zero_planar_command_ticks_total": 0,
+      "min_planar_command_speed_mps": 0.02442286873781548,
+      "mean_frac_ticks_negative_progress": 0.020703703703703703,
+      "mean_progress_share_first_0p5s_after_base_switch": 0.15751905670981708
+    },
+    "first_0p5s_after_switch_time_share": "about 0.5 s per 2.5 s segment = ~0.20 of the time"
+  }
+}

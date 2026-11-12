@@ -1,0 +1,35 @@
+% Requires: booktabs, multirow. No vertical rules by design.
+% E1, 500 paired seeds (0-499). All four metrics are RMSEs; EE Ori is the
+% RMSE of the per-step SO(3) geodesic error. Means at the established
+% precision, SDs at three decimals.
+\begin{table*}[t]
+\centering
+\caption{Base-velocity and EE-pose tracking RMSEs (mean $\pm$ standard deviation) over 500 random seeds. Bold values indicate the lowest mean errors.}
+\label{tab:wbc_tracking}
+\setlength{\tabcolsep}{4pt}
+\small
+\begin{tabular}{@{}llrrrr@{}}
+\toprule
+& & \multicolumn{4}{c}{Tracking RMSE (lower is better)} \\
+\cmidrule(l){3-6}
+Condition (Base / EE) & Method & Base XY & Yaw & EE Pos & EE Ori \\
+ & & [m\,s$^{-1}$] & [rad\,s$^{-1}$] & [m] & [$^{\circ}$] \\
+\midrule
+\multirow{3}{*}{T1: Still / Fixed} & C1 (\textbf{Ours}) & $\mathbf{0.0160} \pm 0.014$ & $\mathbf{0.0070} \pm 0.002$ & $0.0753 \pm 0.034$ & $17.05 \pm 13.124$ \\
+ & C3 & $0.0268 \pm 0.017$ & $0.0136 \pm 0.009$ & $\mathbf{0.0731} \pm 0.043$ & $\mathbf{13.04} \pm 14.874$ \\
+ & C5 & $0.0438 \pm 0.026$ & $0.0295 \pm 0.015$ & $0.1056 \pm 0.085$ & $16.68 \pm 9.176$ \\
+\addlinespace
+\multirow{3}{*}{T2: Still / Random} & C1 (\textbf{Ours}) & $\mathbf{0.0255} \pm 0.005$ & $\mathbf{0.0202} \pm 0.003$ & $\mathbf{0.2052} \pm 0.040$ & $\mathbf{34.07} \pm 7.306$ \\
+ & C3 & $0.0395 \pm 0.009$ & $0.0401 \pm 0.013$ & $0.2924 \pm 0.062$ & $44.47 \pm 11.810$ \\
+ & C5 & $0.0619 \pm 0.008$ & $0.0765 \pm 0.013$ & $0.2629 \pm 0.063$ & $34.70 \pm 7.179$ \\
+\addlinespace
+\multirow{3}{*}{T3: Moving / Fixed} & C1 (\textbf{Ours}) & $\mathbf{0.1523} \pm 0.023$ & $\mathbf{0.0744} \pm 0.013$ & $\mathbf{0.0686} \pm 0.034$ & $14.76 \pm 11.673$ \\
+ & C3 & $0.1687 \pm 0.030$ & $0.0912 \pm 0.025$ & $0.0741 \pm 0.042$ & $\mathbf{12.64} \pm 12.137$ \\
+ & C5 & $0.1917 \pm 0.037$ & $0.1021 \pm 0.025$ & $0.1273 \pm 0.132$ & $16.95 \pm 9.439$ \\
+\addlinespace
+\multirow{3}{*}{T4: Moving / Random} & C1 (\textbf{Ours}) & $\mathbf{0.1546} \pm 0.025$ & $\mathbf{0.0776} \pm 0.015$ & $\mathbf{0.1940} \pm 0.038$ & $\mathbf{32.57} \pm 7.111$ \\
+ & C3 & $0.1697 \pm 0.026$ & $0.0979 \pm 0.022$ & $0.2852 \pm 0.062$ & $43.33 \pm 11.031$ \\
+ & C5 & $0.1931 \pm 0.042$ & $0.1053 \pm 0.037$ & $0.2559 \pm 0.077$ & $34.15 \pm 8.177$ \\
+\bottomrule
+\end{tabular}
+\end{table*}

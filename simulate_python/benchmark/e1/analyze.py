@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""E1 extended to 500 paired seeds (0-499): validation, statistics, RA-L table.
+"""E1 official analysis, 500 paired seeds (0-499): validation, statistics, RA-L table.
 
-Seeds 0-49 are the existing round-3 official episodes (results/raw/E1, not
-re-simulated, not copied); seeds 50-499 were simulated with the unchanged
-runner into results/E1_500seed/raw/E1. Nothing in the 50-seed tree is written.
+All 6,000 episodes are in results/E1/raw/E1. Seeds 0-49 are the round-3 runs and
+seeds 50-499 the extension; both were moved there unchanged in the 2026-11-12 cleanup.
+Seeds 0-49 are cross-checked against the frozen round-3 v2 reference CSVs in
+results/E1/reference_round3_50seed/.
 
 All four metrics are RMSEs over the evaluated ticks (3-30 s window, truncated
 at termination), recomputed here from the per-tick logs and cross-checked
@@ -15,7 +16,7 @@ against the run-time metrics.json:
 Published values follow the v2 table exactly: Base XY / Yaw / EE Pos from
 metrics.json (full float64), EE Ori recomputed from the logged keypoints.
 
-Run:  python3 -m benchmark.round3.e1_500seed
+Run:  python3 -m benchmark.e1.analyze            (from simulate_python/)
 """
 
 from __future__ import annotations
@@ -32,18 +33,20 @@ import numpy as np
 
 from benchmark.round3 import common  # first: puts the repo root on sys.path
 from benchmark.core import frames, stats  # noqa: E402
-from benchmark.round3 import paper_tables_e1 as v1  # noqa: E402
 
 BENCH = common.BENCH
-RAW_OLD = os.path.join(BENCH, "results", "raw", "E1")
-OUT = os.path.join(BENCH, "results", "E1_500seed")
-RAW_NEW = os.path.join(OUT, "raw", "E1")
-V2_SUMMARY = os.path.join(BENCH, "results", "final_round3", "E1", "paper_tables",
-                          "E1_50seed_mean_sd_v2_oriRMSE.csv")
-V2_PER_SEED = os.path.join(BENCH, "results", "final_round3", "E1", "paper_tables",
-                           "E1_per_seed_600rows_v2_oriRMSE.csv")
+OUT = os.path.join(BENCH, "results", "E1")
+RAW_OLD = RAW_NEW = os.path.join(OUT, "raw", "E1")      # one tree, seeds 0-499
+V2_REF = os.path.join(OUT, "reference_round3_50seed")
+V2_SUMMARY = os.path.join(V2_REF, "E1_50seed_mean_sd_v2_oriRMSE.csv")
+V2_PER_SEED = os.path.join(V2_REF, "E1_per_seed_600rows_v2_oriRMSE.csv")
 
-CONDITIONS, BASELINES = v1.CONDITIONS, v1.BASELINES
+# Constants formerly imported from round3/paper_tables_e1.py (values unchanged; they
+# label the CSV rows and the TeX table exactly as in the published outputs).
+CONDITIONS, BASELINES = ["T1", "T2", "T3", "T4"], ["C1", "C3", "C5"]
+METHOD_LABEL = {"C1": "C1 Unified RL WBC (Ours)", "C3": "C3 RL Locomotion + IK",
+                "C5": "C5 Cooperative Dual-PPO"}
+METHOD_SHORT_TEX = {"C1": r"C1 (\textbf{Ours})", "C3": "C3", "C5": "C5"}
 N_SEEDS = 500
 OLD_SEEDS = range(0, 50)
 CONDITION_LABEL = {"T1": "Still / Fixed", "T2": "Still / Random",
@@ -242,7 +245,7 @@ def per_seed_rows(seen, n_seeds):
             for s in range(n_seeds):
                 e = seen[(c, b, s)]
                 r = {"condition": c, "condition_label": CONDITION_LABEL[c],
-                     "baseline": b, "method": v1.METHOD_LABEL[b], "seed": s,
+                     "baseline": b, "method": METHOD_LABEL[b], "seed": s,
                      "seed_source": "round3_official_0_49" if s in OLD_SEEDS
                      else "E1_500seed_extension"}
                 for k, _h, _u, _d, _mk in METRICS:
@@ -274,7 +277,7 @@ def summary(rows, seeds, cfg):
                        and r["seed"] in seeds]
                 out.append({
                     "condition": c, "condition_label": CONDITION_LABEL[c],
-                    "baseline": b, "method": v1.METHOD_LABEL[b], "metric": k,
+                    "baseline": b, "method": METHOD_LABEL[b], "metric": k,
                     "unit": UNITS[k], "in_paper_table": int(k != "ee_ori_mae_deg"),
                     "n_seeds": int(v.size), "mean": float(v.mean()),
                     "sd_ddof1": float(v.std(ddof=1)), "ci95_lower": lo, "ci95_upper": hi,
@@ -362,7 +365,7 @@ def build_tex(summ):
                 m = r"\mathbf{" + m + "}" if b == best[k] else m
                 cells.append(f"${m} \\pm {e['sd_ddof1']:.{SD_DIGITS}f}$")
             head = (r"\multirow{3}{*}{" + f"{c}: {CONDITION_LABEL[c]}" + "}") if bi == 0 else ""
-            L.append(head + " & " + v1.METHOD_SHORT_TEX[b] + " & " + " & ".join(cells) + r" \\")
+            L.append(head + " & " + METHOD_SHORT_TEX[b] + " & " + " & ".join(cells) + r" \\")
         if ci < len(CONDITIONS) - 1:
             L.append(r"\addlinespace")
     L += [r"\bottomrule", r"\end{tabular}", r"\end{table*}"]
@@ -406,7 +409,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--n-seeds", type=int, default=N_SEEDS)
     ap.add_argument("--workers", type=int, default=12)
-    ap.add_argument("--out", default=OUT, help="output directory (default E1_500seed)")
+    ap.add_argument("--out", default=OUT, help="output directory (default results/E1)")
     args = ap.parse_args(argv)
     out_dir = args.out
     n_seeds = args.n_seeds

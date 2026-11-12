@@ -41,7 +41,7 @@ from benchmark.e3 import kinematics as K
 from benchmark.scenarios import experiments as E
 
 OUT = os.path.join(common.BENCH, "results", "E3", "protocol", "pose_audit")
-E1RAW = os.path.join(common.BENCH, "results", "raw", "E1")
+E1RAW = os.path.join(common.BENCH, "results", "E1", "raw", "E1")   # moved in the 2026-11-12 cleanup
 _W = {}
 
 

@@ -3,6 +3,20 @@
 
   <statistic center="0 0 0.3" extent="2.5"/>
 
+  <!--
+    E4 sim2sim alignment (2026-11-14): enable multi-point convex contact.
+    Without multiccd, MuJoCo resolves the flat puck-on-disk (cylinder-cylinder)
+    contact with ONE contact point, so the puck rocks and creeps off an inclined
+    disk even when tan(tilt) < mu (incline diagnostic: mu=0.6 puck slid off a
+    25 deg disk). With multiccd the pair produces 5 contacts and reproduces the
+    Coulomb stick/slip threshold. Robot-only dynamics are bit-identical with and
+    without this flag (verified), so it affects only convex pairs such as
+    puck-disk.  See simulate_python/transport_experiment/docs/ALIGNMENT_REPORT.md.
+  -->
+  <option>
+    <flag multiccd="enable"/>
+  </option>
+
   <!-- Keep the retrieval sim2sim visual setup unchanged. -->
   <visual>
     <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0"/>
@@ -54,6 +68,25 @@
       MuJoCo does not have a direct 'restitution=0.0' geom attribute.
       solref='0.02 1' uses damping ratio 1 (no intended rebound), but is
       not numerically identical to Isaac Lab/PhysX restitution=0.
+
+      E4 sim2sim alignment (2026-11-14):
+        priority="1"  Isaac Lab uses the PhysX 'multiply' combine mode and the
+                      disk/ground/robot carry the default material (mu = 1.0),
+                      so every puck contact has effective mu = mu_puck.
+                      MuJoCo's default rule is the element-wise MAX of the two
+                      geoms, which made puck-disk friction 1.0 regardless of the
+                      puck value. With a higher priority the puck geom alone
+                      sets friction/solref/solimp of all of its contacts, which
+                      reproduces mu_eff = mu_puck. Robot contacts are unchanged.
+        solimp        Default soft contacts let a statically loaded puck creep
+                      at ~1-2 mm/s (incline diagnostic). A stiffer impedance on
+                      the puck's contacts reduces this ~10x without changing
+                      the stick/slip threshold. PhysX friction has no such creep.
+        margin/gap    Contacts are detected within 1 mm and become active within
+                      0.5 mm (margin - gap), like PhysX contact/rest offsets.
+                      Without it the near-zero resting penetration of the stiff
+                      contact made the convex collider miss the flat contact
+                      for single steps (puck dropped ~1 mm, contact flag chatter).
     -->
     <body name="transport_puck" pos="0 0 2">
       <freejoint name="transport_puck_freejoint"/>
@@ -65,7 +98,11 @@
         size="0.050 0.040"
         condim="3"
         friction="0.60 0.005 0.0001"
+        priority="1"
         solref="0.02 1"
+        solimp="0.99 0.999 0.001"
+        margin="0.001"
+        gap="0.0005"
         material="transport_puck_material"/>
     </body>
   </worldbody>

@@ -1,12 +1,28 @@
 #!/usr/bin/env python3
-"""E3 analysis: validation, per-trial table, statistics (results/E3/E3_PROTOCOL.md 5-7).
+"""E3 (bidirectional 7 x 7) analysis: validation, per-trial table, statistics.
+Definitions: docs/E3_PROTOCOL.md sections 5-6. Reads only saved episodes.
 
-    python3 -m benchmark.e3.analyze [--jobs 12]
+    python3 -m benchmark.e3.analyze [--jobs 12] [--raw DIR] [--out DIR]
+
+Outputs (default results/E3/):
+  data/E3_per_trial_14700.csv      one row per episode (all 49 conditions x 3 controllers x 100 seeds)
+  data/E3_arrays.npz               metric arrays [controller, B, T, seed]
+  stats/E3_summary.csv             per controller x condition x metric: n valid / completed /
+                                   terminated / missing, mean, SD, 95 % bootstrap CI, median
+  stats/E3_summary_7x7.csv         machine-readable 7 x 7 table, all four metrics, one row per
+                                   controller x condition
+  stats/E3_paired_vs_C1.csv        C3-C1 and C5-C1 per condition; Holm/BH within metric x rival
+  stats/E3_slice_trends.csv        per figure slice: change from the lowest to each level, per
+                                   controller, and rival-minus-C1 differences of that change
+  stats/E3_sensitivity_completed_only.csv
+  stats/E3_completion.csv
+  validation/validation_summary.json
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import itertools
 import json
 import multiprocessing as mp
@@ -17,101 +33,115 @@ import numpy as np
 
 from benchmark.round3 import common
 from benchmark.e3 import extract as X
-from benchmark.e3.stats import boot_ci, wilson, summarise, paired, holm, bh, finish_family
+from benchmark.e3.stats import wilson, summarise, paired, holm, finish_family
 from benchmark.scenarios import experiments as E
 
 E3 = os.path.join(common.BENCH, "results", "E3")
-RAW = os.path.join(E3, "raw", "E3")
+SCHED = os.path.join(E3, "protocol", "E3_command_schedules.npz")
 CTRL = ("C1", "C3", "C5")
 CFG, _G = E.load_config("E3")
 BLEV = [float(b) for b in CFG["base"]["levels"]]
-TLAB = list(CFG["ee"]["level_labels"])
-TINT = CFG["ee"]["update_intervals_s"]
-FREQ = [0.0] + [1.0 / t for t in TINT[1:]]
+HZ = E.e3_update_hz(CFG)
+HZLAB = [str(x) for x in CFG["ee"]["update_hz_labels"]]
 SEEDS = list(range(CFG["official_seeds"]["start"], CFG["official_seeds"]["start"] + CFG["official_seeds"]["count"]))
-NB, NT, NS = len(BLEV), len(TLAB), len(SEEDS)
+NB, NT, NS = len(BLEV), len(HZ), len(SEEDS)
+N_EP = len(CTRL) * NB * NT * NS
 N_EVAL = E.n_eval_ticks(CFG)
-BINS = json.load(open(os.path.join(E3, "protocol", "analysis_bins.json")))
-MAIN_EE, MAIN_BASE = (0, 4), (4, 0)
-RMSE = ["base_xy_rmse_mps", "yaw_rmse_radps", "ee_pos_rmse_m", "ee_ori_rmse_rad"]
+RMSE = list(X.RMSE_KEYS)
 UNITS = {"base_xy_rmse_mps": "m/s", "yaw_rmse_radps": "rad/s", "ee_pos_rmse_m": "m", "ee_ori_rmse_rad": "rad"}
-REACH = ["reach_rate_primary", "reach_rate_strict", "rmst_primary_s", "rmst_strict_s",
-         "n_targets", "mean_jump_pos_m", "mean_jump_ori_rad"]
-EV_Q = ["baseline_abs", "peak_excess", "peak_pos_excess", "int_excess", "int_pos_excess",
-        "post_abs_mean", "residual_abs", "recovery_s", "recovery_censored", "recovery_defined",
-        "peak_pos_excess_b025", "int_pos_excess_b025", "peak_pos_excess_b100", "int_pos_excess_b100"]
-EVENT_KEYS = [f"{g}_{s}_{q}" for g in ("ee_iso", "ee_ovl", "base_iso", "base_ovl")
-              for s in X.SIGS for q in EV_Q] + [f"{g}_jump_pos_m" for g in ("ee_iso", "ee_ovl")] + \
-             [f"{g}_jump_ori_rad" for g in ("ee_iso", "ee_ovl")]
-COUNTS = ["n_ee_iso", "n_ee_ovl", "n_base_iso", "n_base_ovl", "n_ee_events_truncated", "n_base_events_truncated"]
-SCALARS = RMSE + REACH + ["survived", "valid_eval_s", "ee_pos_err_t3", "ee_ori_err_t3",
-                          "pose0_reached_primary_in_first_hold"] + EVENT_KEYS + COUNTS
+SCALARS = RMSE + ["survived", "valid_eval_s", "n_ee_switches_evaluated"]
+SLICES = {"vs_base_bound": E.e3_slice(CFG, "vs_base_bound"), "vs_ee_update": E.e3_slice(CFG, "vs_ee_update")}
+RAW = os.path.join(E3, "raw", "E3")
 
 
 def cid(bi, ti):
     return f"B{bi}T{ti}"
 
 
+def idx(c):
+    return int(c[1]), int(c[3])
+
+
 def _job(args):
-    c, bi, ti, s = args
-    d = os.path.join(RAW, c, cid(bi, ti), f"seed_{s:03d}")
-    o = X.extract(d, base_bound=BLEV[bi], keep_event_rows=(bi, ti) in (MAIN_EE, MAIN_BASE))
+    raw, c, bi, ti, s = args
+    d = os.path.join(raw, c, cid(bi, ti), f"seed_{s:03d}")
+    o = X.extract(d, base_bound=BLEV[bi])
     o.update(controller=c, bi=bi, ti=ti, seed=s)
-    o.pop("traces_full", None)
     return o
 
 
 def main(argv=None):
+    global E3
     ap = argparse.ArgumentParser()
     ap.add_argument("--jobs", type=int, default=12)
+    ap.add_argument("--raw", default=RAW, help="episode root containing C1/C3/C5")
+    ap.add_argument("--out", default=E3, help="output root (data/, stats/, validation/)")
+    ap.add_argument("--seeds", default=None, help="'a-b' subset (smoke tests only)")
     a = ap.parse_args(argv)
+    E3 = a.out
+    seeds = SEEDS if a.seeds is None else list(range(int(a.seeds.split("-")[0]), int(a.seeds.split("-")[1]) + 1))
     for sub in ("data", "stats", "validation"):
         os.makedirs(os.path.join(E3, sub), exist_ok=True)
-    jobs = [(c, bi, ti, s) for c in CTRL for bi in range(NB) for ti in range(NT) for s in SEEDS]
+    jobs = [(a.raw, c, bi, ti, s) for c in CTRL for bi in range(NB) for ti in range(NT) for s in seeds]
     with mp.get_context("fork").Pool(a.jobs) as pool:
         eps = pool.map(_job, jobs, chunksize=10)
     print(f"loaded {len(eps)} episodes")
-    F = validate(eps)
+    F = validate(eps, seeds)
     per_trial(eps)
-    A, TR = arrays(eps)
-    stats_rmse(A)
-    stats_events(A, eps)
-    stats_misc(A, eps)
+    A = arrays(eps)
+    summary(A)
+    stats_paired(A)
+    slice_trends(A)
+    completion(A)
     print(f"validation failures: {len(F)}")
     return 1 if F else 0
 
 
 # ------------------------------------------------------------------ validation
-def validate(eps):
+def _sha16(arr):
+    return hashlib.sha256(np.ascontiguousarray(arr).tobytes()).hexdigest()[:16]
+
+
+def validate(eps, seeds):
     F, chk = [], {}
     probs = [e for e in eps if e["problems"]]
     F += [f"{e['path']}: {e['problems']}" for e in probs[:20]]
+    chk["episodes_expected"] = len(CTRL) * NB * NT * len(seeds)
     chk["episodes_loaded"], chk["episodes_with_problems"] = len(eps), len(probs)
     ok = [e for e in eps if not e["problems"]]
     keys = {(e["controller"], e["bi"], e["ti"], e["seed"]) for e in eps}
-    if len(keys) != 3 * NB * NT * NS or len(eps) != 3 * NB * NT * NS:
+    if len(keys) != chk["episodes_expected"] or len(eps) != chk["episodes_expected"]:
         F.append(f"episode count {len(eps)} / unique {len(keys)}")
+    # frozen schedules (written before the run)
+    S = np.load(SCHED)
+    with open(SCHED + ".sha256") as h:
+        want = h.read().split()[0]
+    with open(SCHED, "rb") as h:
+        got = hashlib.sha256(h.read()).hexdigest()
+    chk["frozen_schedule_sha256"], chk["frozen_schedule_sha256_ok"] = got, got == want
+    if got != want:
+        F.append("frozen schedule file changed since the freeze")
+    sidx = {int(s): i for i, s in enumerate(S["seeds"])}
+    hb = {(bi, s): _sha16(S["base_commands_by_B"][bi, sidx[s]]) for bi in range(NB) for s in seeds}
+    he = {(ti, s): _sha16(S["ee_commands_by_T"][ti, sidx[s]]) for ti in range(NT) for s in seeds}
+    nfz = 0
+    for e in ok:
+        if e["base_hash"] != hb[(e["bi"], e["seed"])] or e["ee_hash"] != he[(e["ti"], e["seed"])]:
+            nfz += 1
+    chk["episodes_with_commands_differing_from_frozen_schedule"] = nfz
+    if nfz:
+        F.append(f"{nfz} episodes whose stored schedule differs from the frozen schedule")
     by = {(e["controller"], e["bi"], e["ti"], e["seed"]): e for e in ok}
-    for bi, ti, s in itertools.product(range(NB), range(NT), SEEDS):
+    for bi, ti, s in itertools.product(range(NB), range(NT), seeds):
         g = [by.get((c, bi, ti, s)) for c in CTRL]
         if any(x is None for x in g):
             continue
         for k in ("base_hash", "ee_hash", "init_hash"):
             if len({x[k] for x in g}) != 1:
                 F.append(f"pairing {k} differs across controllers at {cid(bi, ti)} seed {s}")
-    for s in SEEDS:
+    for s in seeds:
         if len({e["init_hash"] for e in ok if e["seed"] == s}) != 1:
             F.append(f"initial state differs across conditions, seed {s}")
-        for bi in range(NB):
-            if len({e["base_hash"] for e in ok if e["seed"] == s and e["bi"] == bi}) != 1:
-                F.append(f"base schedule differs across EE levels (B{bi}, seed {s})")
-        for ti in range(NT):
-            if len({e["ee_hash"] for e in ok if e["seed"] == s and e["ti"] == ti}) != 1:
-                F.append(f"EE schedule differs across base levels (T{ti}, seed {s})")
-        rows = [by[("C1", 0, ti, s)]["scenario"]["ee_pose_table_rows_used"] for ti in range(NT)]
-        longest = max(rows, key=len)
-        if any(r != longest[:len(r)] for r in rows):
-            F.append(f"EE levels are not prefixes of one sequence, seed {s}")
     for c in CTRL:
         h = {e["proto_hash"] for e in ok if e["controller"] == c}
         chk[f"protocol_metadata_sets_{c}"] = len(h)
@@ -136,6 +166,8 @@ def validate(eps):
             F.append(f"settle commands wrong {e['path']}")
         if not e["base_bound_ok"]:
             F.append(f"base bound {e['path']}")
+        if e["scenario"].get("protocol") != E.E3_PROTOCOL:
+            F.append(f"protocol tag {e['path']}")
     chk.update({f"max_{k}": v for k, v in w.items()})
     if w["rmse_vs_json"] > 1e-6 or w["theta_vs_logged_deg"] > 1e-3 or w["issued_vs_scheduled"] > 1e-6:
         F.append(f"metric/command recomputation mismatch {dict(w)}")
@@ -143,326 +175,151 @@ def validate(eps):
     chk["terminated"] = len(term)
     chk["terminations"] = sorted(f"{e['controller']}/{cid(e['bi'], e['ti'])}/seed_{e['seed']:03d}:"
                                  f"{e['termination_reason']}@{e['valid_eval_s']:.2f}s" for e in term)
-    # event coverage at the main conditions
-    for name, (bi, ti), g in (("ee_main", MAIN_EE, "n_ee_iso"), ("base_main", MAIN_BASE, "n_base_iso")):
-        n = [by[(c, bi, ti, s)]["events"].get(g, 0) for c in CTRL for s in SEEDS]
-        chk[f"{name}_isolated_events_per_episode_min_mean"] = [int(min(n)), float(np.mean(n))]
-    # matched event ticks across controllers (completed episodes)
-    mism = 0
-    for (bi, ti) in (MAIN_EE, MAIN_BASE):
-        for s in SEEDS:
-            g = [by[(c, bi, ti, s)] for c in CTRL]
-            if all(x["survived"] for x in g):
-                t = [[(r["kind"], r["tick"], r["isolated"]) for r in x["event_rows"]] for x in g]
-                mism += int(not (t[0] == t[1] == t[2]))
-    chk["main_condition_event_tick_mismatches"] = mism
-    if mism:
-        F.append(f"{mism} main-condition episodes with different event ticks across controllers")
     chk["failures"], chk["passed"] = F, not F
     json.dump(chk, open(os.path.join(E3, "validation", "validation_summary.json"), "w"), indent=1)
     print(json.dumps({k: v for k, v in chk.items() if k not in ("failures", "terminations")}, indent=1))
-    print("terminations:", chk["terminations"])
+    print("terminations:", chk["terminations"][:50])
     for f in F[:20]:
         print("FAIL", f)
     return F
 
 
+# ------------------------------------------------------------------ tables
 def _flat(e):
-    f = {}
     if e["problems"] or e["n_eval"] == 0:
-        return f
-    f.update(e["rec"])
-    f.update(e["events"])
-    f.update(e["reach"] or {})
-    f.update(survived=e["survived"], valid_eval_s=e["valid_eval_s"], ee_pos_err_t3=e["ee_err_at_t3"]["pos"],
-             ee_ori_err_t3=e["ee_err_at_t3"]["ori"],
-             pose0_reached_primary_in_first_hold=e["pose0_reached_primary_in_first_hold"])
-    return f
+        return {}
+    return e["rec"] | {"survived": e["survived"], "valid_eval_s": e["valid_eval_s"],
+                       "n_ee_switches_evaluated": e["n_ee_switches_evaluated"]}
 
 
 def per_trial(eps):
     rows = []
     for e in sorted(eps, key=lambda e: (e["controller"], e["bi"], e["ti"], e["seed"])):
         r = {"controller": e["controller"], "condition": cid(e["bi"], e["ti"]), "base_bound": BLEV[e["bi"]],
-             "ee_level": TLAB[e["ti"]], "ee_update_hz": FREQ[e["ti"]], "seed": e["seed"]}
+             "ee_update_hz": HZ[e["ti"]], "ee_update_label": HZLAB[e["ti"]], "seed": e["seed"]}
         if e["problems"]:
             r["problems"] = ";".join(e["problems"])
         else:
             r.update(termination_reason=e["termination_reason"], n_eval_ticks=e["n_eval"],
-                     pose_rows_used=" ".join(map(str, e["scenario"]["ee_pose_table_rows_used"])))
+                     pose_rows_used=" ".join(map(str, e["scenario"]["ee_pose_table_rows_used"])),
+                     base_schedule_sha16=e["base_hash"], ee_schedule_sha16=e["ee_hash"],
+                     initial_state_sha16=e["init_hash"])
             r.update(_flat(e))
         rows.append(r)
     cols = list(dict.fromkeys(k for r in rows for k in r))
-    common.write_csv(os.path.join(E3, "data", "E3_per_trial_7500.csv"), rows, cols)
+    common.write_csv(os.path.join(E3, "data", f"E3_per_trial_{len(rows)}.csv"), rows, cols)
 
 
 def arrays(eps):
-    A = {k: np.full((3, NB, NT, NS), np.nan) for k in SCALARS}
-    TR = {k: np.full((3, NB, NT, NS, 4, X.TRACE_LEN), np.nan, dtype=np.float32) for k in ("ee_iso", "base_iso")}
+    A = {k: np.full((len(CTRL), NB, NT, NS), np.nan) for k in SCALARS}
     for e in eps:
         i = (CTRL.index(e["controller"]), e["bi"], e["ti"], SEEDS.index(e["seed"]))
         for k, v in _flat(e).items():
-            if k in A and v is not None:
-                A[k][i] = v
-        if not e["problems"] and e["n_eval"]:
-            for k in TR:
-                if e["traces"][k] is not None:
-                    TR[k][i] = e["traces"][k]
-    np.savez_compressed(os.path.join(E3, "data", "E3_arrays.npz"), **A,
-                        **{f"trace_{k}": v for k, v in TR.items()}, controllers=np.array(CTRL),
-                        base_levels=np.array(BLEV), ee_levels=np.array(TLAB), ee_freq_hz=np.array(FREQ),
-                        seeds=np.array(SEEDS), trace_signals=np.array(X.SIGS),
-                        trace_t=np.arange(-X.PRE, X.POST) * X.DT)
-    ev = []
-    for e in eps:
-        for r in e.get("event_rows", []):
-            ev.append({"controller": e["controller"], "condition": cid(e["bi"], e["ti"]), "seed": e["seed"]} | r)
-    common.write_csv(os.path.join(E3, "data", "E3_event_rows_main_conditions.csv"), ev)
-    return A, TR
+            A[k][i] = v
+    np.savez_compressed(os.path.join(E3, "data", "E3_arrays.npz"), **A, controllers=np.array(CTRL),
+                        base_levels=np.array(BLEV), ee_update_hz=np.array(HZ), ee_update_labels=np.array(HZLAB),
+                        seeds=np.array(SEEDS))
+    return A
 
 
-# ------------------------------------------------------------------ statistics
-def stats_rmse(A):
-    S = os.path.join(E3, "stats")
-    rows = []
-    summ_metrics = RMSE + REACH + ["ee_pos_err_t3", "ee_ori_err_t3", "pose0_reached_primary_in_first_hold"]
+def _counts(A, ci, bi, ti):
+    surv = A["survived"][ci, bi, ti]
+    valid = int(np.isfinite(surv).sum())
+    comp = int(np.nansum(surv))
+    return {"n_trials": NS, "n_valid": valid, "n_completed": comp, "n_terminated_early": valid - comp,
+            "n_missing_or_corrupt": NS - valid}
+
+
+def summary(A):
+    rows, wide = [], []
     for ci, c in enumerate(CTRL):
         for bi, ti in itertools.product(range(NB), range(NT)):
-            surv = A["survived"][ci, bi, ti]
-            k, n = int(np.nansum(surv)), int(np.isfinite(surv).sum())
-            wl, wh = wilson(k, n)
-            base = {"controller": c, "condition": cid(bi, ti), "base_bound": BLEV[bi], "ee_level": TLAB[ti],
-                    "ee_update_hz": FREQ[ti], "completion_rate": k / n, "completion_wilson_lo": wl,
-                    "completion_wilson_hi": wh, "n_episodes": n,
-                    "mean_effective_eval_s": float(np.nanmean(A["valid_eval_s"][ci, bi, ti]))}
-            for m in summ_metrics:
-                x = A[m][ci, bi, ti]
-                if np.isfinite(x).any():
-                    rows.append(base | {"metric": m, "unit": UNITS.get(m, "")} | summarise(x))
-    common.write_csv(os.path.join(S, "E3_summary.csv"), rows)
-    P = []
-    for m, riv in itertools.product(RMSE + ["reach_rate_primary", "reach_rate_strict", "rmst_primary_s",
-                                            "rmst_strict_s"], ("C3", "C5")):
-        fam = []
-        for bi, ti in itertools.product(range(NB), range(NT)):
-            a, b = A[m][0, bi, ti], A[m][CTRL.index(riv), bi, ti]
-            if np.isfinite(a).sum() < 10:
-                continue
-            fam.append({"metric": m, "comparison": f"{riv}-C1", "rival": riv, "condition": cid(bi, ti),
-                        "base_bound": BLEV[bi], "ee_level": TLAB[ti], "family": f"{m}|{riv}-C1"} | paired(a, b))
-        P += finish_family(fam, lower_is_better=not m.startswith("reach_rate"))
-    common.write_csv(os.path.join(S, "E3_paired_tracking_and_reaching.csv"), P)
-    D, DC = [], []
-    for m in RMSE:
-        is_ee = m.startswith("ee_")
-        famc = {r: [] for r in ("C3", "C5")}
-        for bi, ti in itertools.product(range(NB), range(NT)):
-            if (is_ee and bi == 0) or (not is_ee and ti == 0):
-                continue
-            rb, rt = (0, ti) if is_ee else (bi, 0)
-            deg = {}
-            for ci, c in enumerate(CTRL):
-                x = A[m][ci]
-                deg[c] = x[bi, ti] - x[rb, rt]
-                pr = paired(x[rb, rt], x[bi, ti])
-                D.append({"direction": "base_to_ee" if is_ee else "ee_to_base", "metric": m, "controller": c,
-                          "condition": cid(bi, ti), "base_bound": BLEV[bi], "ee_level": TLAB[ti],
-                          "reference": cid(rb, rt), "abs_at_condition": float(np.nanmean(x[bi, ti])),
-                          "abs_at_reference": float(np.nanmean(x[rb, rt])), "rel_change": pr.get("rel_diff"),
-                          "p": pr.get("p")} | summarise(deg[c]))
-            for r in ("C3", "C5"):
-                famc[r].append({"direction": "base_to_ee" if is_ee else "ee_to_base", "metric": m,
-                                "comparison": f"deg({r})-deg(C1)", "rival": r, "condition": cid(bi, ti),
-                                "base_bound": BLEV[bi], "ee_level": TLAB[ti]} | paired(deg["C1"], deg[r]))
-        for r in famc:
-            DC += finish_family(famc[r])
-    grp = defaultdict(list)
-    for r in D:
-        grp[(r["metric"], r["controller"])].append(r)
-    for g in grp.values():
-        for r, h in zip(g, holm([r["p"] for r in g])):
-            r["p_holm"], r["significant_holm"] = float(h), int(np.isfinite(h) and h < 0.05)
-    common.write_csv(os.path.join(S, "E3_degradation.csv"), D)
-    common.write_csv(os.path.join(S, "E3_degradation_C1_vs_rivals.csv"), DC)
-    # completed-only sensitivity
-    rows, ch = [], 0
+            n = _counts(A, ci, bi, ti)
+            wl, wh = wilson(n["n_completed"], n["n_valid"])
+            base = {"controller": c, "condition": cid(bi, ti), "base_bound": BLEV[bi], "ee_update_hz": HZ[ti],
+                    "ee_update_label": HZLAB[ti]} | n | {
+                "completion_rate": n["n_completed"] / n["n_valid"] if n["n_valid"] else float("nan"),
+                "completion_wilson_lo": wl, "completion_wilson_hi": wh,
+                "mean_effective_eval_s": float(np.nanmean(A["valid_eval_s"][ci, bi, ti]))}
+            wr = dict(base)
+            for m in RMSE:
+                s = summarise(A[m][ci, bi, ti])
+                rows.append(base | {"metric": m, "unit": UNITS[m], "n_scored": s.pop("n")} | s)
+                wr.update({f"{m}_{k}": v for k, v in s.items() if k != "median"})
+            wide.append(wr)
+    common.write_csv(os.path.join(E3, "stats", "E3_summary.csv"), rows)
+    common.write_csv(os.path.join(E3, "stats", "E3_summary_7x7.csv"), wide)
+
+
+def stats_paired(A):
+    P, sens, ch = [], [], 0
     for m, riv in itertools.product(RMSE, ("C3", "C5")):
         fa, fb = [], []
         for bi, ti in itertools.product(range(NB), range(NT)):
-            surv = np.all(A["survived"][:, bi, ti] == 1, axis=0)
             a, b = A[m][0, bi, ti], A[m][CTRL.index(riv), bi, ti]
-            base = {"metric": m, "comparison": f"{riv}-C1", "rival": riv, "condition": cid(bi, ti)}
+            base = {"metric": m, "comparison": f"{riv}-C1", "rival": riv, "condition": cid(bi, ti),
+                    "base_bound": BLEV[bi], "ee_update_hz": HZ[ti], "ee_update_label": HZLAB[ti],
+                    "family": f"{m}|{riv}-C1 (49 conditions)"}
             fa.append(base | paired(a, b))
+            surv = np.all(A["survived"][:, bi, ti] == 1, axis=0)
             fb.append(base | {"n_completed_seeds": int(surv.sum())} |
                       paired(np.where(surv, a, np.nan), np.where(surv, b, np.nan)))
-        finish_family(fa)
+        P += finish_family(fa)
         finish_family(fb)
         for x, y in zip(fa, fb):
             ch += x["verdict"] != y["verdict"]
-            rows.append(y | {"verdict_all": x["verdict"], "verdict_completed_only": y["verdict"],
+            sens.append(y | {"verdict_all": x["verdict"], "verdict_completed_only": y["verdict"],
                              "changed": int(x["verdict"] != y["verdict"])})
-    common.write_csv(os.path.join(S, "E3_sensitivity_completed_only.csv"), rows)
-    print(f"RMSE/reach paired {len(P)}, degradation {len(D)}/{len(DC)}, completed-only changes {ch}/{len(rows)}")
+    common.write_csv(os.path.join(E3, "stats", "E3_paired_vs_C1.csv"), P)
+    common.write_csv(os.path.join(E3, "stats", "E3_sensitivity_completed_only.csv"), sens)
+    print(f"paired {len(P)}, completed-only verdict changes {ch}/{len(sens)}")
 
 
-EV_MAIN = {
-    "ee_to_base_B0_T2s": ("ee_iso", MAIN_EE, [("base_xy", q) for q in ("peak_pos_excess", "int_pos_excess", "recovery_s")]
-                          + [("yaw", q) for q in ("peak_pos_excess", "int_pos_excess", "recovery_s")]
-                          + [("ee_pos", "post_abs_mean"), ("ee_pos", "residual_abs"),
-                             ("ee_ori", "post_abs_mean"), ("ee_ori", "residual_abs")]),
-    "base_to_ee_Fixed_B060": ("base_iso", MAIN_BASE, [("ee_pos", q) for q in ("peak_pos_excess", "int_pos_excess", "recovery_s")]
-                              + [("ee_ori", q) for q in ("peak_pos_excess", "int_pos_excess", "recovery_s")]
-                              + [("ee_pos", "baseline_abs"), ("ee_ori", "baseline_abs")]),
-}
-DESCR = ["baseline_abs", "peak_excess", "int_excess", "recovery_censored", "recovery_defined",
-         "peak_pos_excess_b025", "int_pos_excess_b025", "peak_pos_excess_b100", "int_pos_excess_b100"]
-
-
-def stats_events(A, eps):
-    S = os.path.join(E3, "stats")
-    pc, pp = [], []
-    for fam, (g, (bi, ti), mets) in EV_MAIN.items():
-        sigs = sorted({s for s, _ in mets})
-        allm = list(dict.fromkeys(mets + [(s, q) for s in sigs for q in DESCR]))
-        rows = []
-        for s, q in allm:
-            key = f"{g}_{s}_{q}"
-            x = A[key][:, bi, ti]
-            for ci, c in enumerate(CTRL):
-                pc.append({"family": fam, "event": g, "condition": cid(bi, ti), "metric": f"{s}_{q}",
-                           "controller": c, "formal": int((s, q) in mets)} | summarise(x[ci]))
-            for r in ("C3", "C5"):
-                row = {"family": fam, "event": g, "condition": cid(bi, ti), "metric": f"{s}_{q}",
-                       "comparison": f"{r}-C1", "rival": r, "formal": int((s, q) in mets)} | \
-                      paired(x[0], x[CTRL.index(r)])
-                rows.append(row)
-        formal = [r for r in rows if r["formal"]]
-        finish_family(formal)
-        for r in rows:
-            if not r["formal"]:
-                r["verdict"] = "descriptive (not in the formal family)"
-        pp += rows
-    common.write_csv(os.path.join(S, "E3_events_main_per_controller.csv"), pc)
-    common.write_csv(os.path.join(S, "E3_events_main_paired.csv"), pp)
-    # every cell: isolated and overlapping (descriptive) + isolated paired sweeps
-    rows, sweep = [], []
-    for g, s, q in itertools.product(("ee_iso", "ee_ovl", "base_iso", "base_ovl"), X.SIGS,
-                                     ("peak_pos_excess", "int_pos_excess", "baseline_abs", "post_abs_mean")):
-        key = f"{g}_{s}_{q}"
-        for ci, c in enumerate(CTRL):
-            for bi, ti in itertools.product(range(NB), range(NT)):
-                x = A[key][ci, bi, ti]
-                if np.isfinite(x).sum() >= 1:
-                    cnt = A[f"n_{g}"][ci, bi, ti]
-                    rows.append({"event": g, "signal": s, "metric": q, "controller": c, "condition": cid(bi, ti),
-                                 "base_bound": BLEV[bi], "ee_level": TLAB[ti],
-                                 "episodes_with_events": int(np.isfinite(x).sum()),
-                                 "events_per_episode_mean": float(np.nanmean(cnt))} | summarise(x))
-    common.write_csv(os.path.join(S, "E3_events_all_cells.csv"), rows)
-    for (g, sigs, cells, tag) in (("ee_iso", ("base_xy", "yaw"), [(0, ti) for ti in range(1, NT)], "ee_to_base_B0_by_T"),
-                                  ("base_iso", ("ee_pos", "ee_ori"), [(bi, 0) for bi in range(1, NB)], "base_to_ee_Fixed_by_B")):
-        for s, r in itertools.product(sigs, ("C3", "C5")):
-            fam = []
-            for bi, ti in cells:
-                for q in ("peak_pos_excess", "int_pos_excess"):
-                    x = A[f"{g}_{s}_{q}"][:, bi, ti]
-                    fam.append({"sweep": tag, "metric": f"{s}_{q}", "comparison": f"{r}-C1", "rival": r,
-                                "condition": cid(bi, ti)} | paired(x[0], x[CTRL.index(r)]))
-            sweep += finish_family(fam)
-    common.write_csv(os.path.join(S, "E3_events_level_sweeps_paired.csv"), sweep)
-    # baseline-window sensitivity at the main conditions
-    bs = []
-    for fam, (g, (bi, ti), mets) in EV_MAIN.items():
-        sigs = ("base_xy", "yaw") if g == "ee_iso" else ("ee_pos", "ee_ori")
-        for s, q, w, r in itertools.product(sigs, ("peak_pos_excess", "int_pos_excess"), ("", "_b025", "_b100"),
-                                            ("C3", "C5")):
-            x = A[f"{g}_{s}_{q}{w}"][:, bi, ti]
-            bs.append({"family": fam, "metric": f"{s}_{q}", "baseline_window": {"": "[-0.5,0) s (registered)",
-                       "_b025": "[-0.24,0) s", "_b100": "[-1.0,0) s"}[w], "comparison": f"{r}-C1"}
-                      | paired(x[0], x[CTRL.index(r)]))
-    common.write_csv(os.path.join(S, "E3_events_baseline_window_sensitivity.csv"), bs)
-    # jump-magnitude bins (EE events at the main EE condition)
-    ev = [r for e in eps for r in e.get("event_rows", []) if r["kind"] == "ee" and (e["bi"], e["ti"]) == MAIN_EE
-          for r in [dict(r, controller=e["controller"], seed=e["seed"])]]
-    jb = []
-    for jk, edges in (("jump_pos_m", BINS["pos_jump_tertile_edges_m"]), ("jump_ori_rad", BINS["ori_jump_tertile_edges_rad"])):
-        for b in range(3):
-            lo = -np.inf if b == 0 else edges[b - 1]
-            hi = np.inf if b == 2 else edges[b]
-            for m in ("base_xy_peak_pos_excess", "base_xy_int_pos_excess", "yaw_peak_pos_excess",
-                      "yaw_int_pos_excess", "ee_pos_residual_abs", "ee_ori_residual_abs"):
-                # per-seed means
-                acc = defaultdict(list)
-                for r in ev:
-                    if r["isolated"] and lo <= r[jk] < hi:
-                        acc[(r["controller"], r["seed"])].append(r[m])
-                X3 = np.full((3, NS), np.nan)
-                for (c, s), v in acc.items():
-                    X3[CTRL.index(c), SEEDS.index(s)] = np.mean(v)
-                for ci, c in enumerate(CTRL):
-                    jb.append({"jump": jk, "bin": b, "bin_range": f"[{lo:.3g}, {hi:.3g})", "metric": m,
-                               "controller": c, "comparison": ""} | summarise(X3[ci]))
-                for rv in ("C3", "C5"):
-                    jb.append({"jump": jk, "bin": b, "bin_range": f"[{lo:.3g}, {hi:.3g})", "metric": m,
-                               "controller": "", "comparison": f"{rv}-C1"} | paired(X3[0], X3[CTRL.index(rv)]))
-    common.write_csv(os.path.join(S, "E3_events_jump_bins.csv"), jb)
-    # within-seed slope of peak excess vs jump (descriptive)
-    sl = []
-    for c in CTRL:
-        for jk in ("jump_pos_m", "jump_ori_rad"):
-            for m in ("base_xy_peak_pos_excess", "yaw_peak_pos_excess"):
-                slopes = []
-                for s in SEEDS:
-                    rr = [r for r in ev if r["controller"] == c and r["seed"] == s and r["isolated"]]
-                    if len(rr) >= 4:
-                        x = np.array([r[jk] for r in rr])
-                        y = np.array([r[m] for r in rr])
-                        if np.ptp(x) > 0:
-                            slopes.append(np.polyfit(x, y, 1)[0])
-                lo_, hi_ = boot_ci(np.array(slopes))
-                sl.append({"controller": c, "jump": jk, "metric": m, "n_seeds": len(slopes),
-                           "mean_slope": float(np.mean(slopes)), "ci95_lo": lo_, "ci95_hi": hi_})
-    common.write_csv(os.path.join(S, "E3_events_jump_slopes.csv"), sl)
-    print(f"events: main {len(pp)}, cells {len(rows)}, sweeps {len(sweep)}, baseline {len(bs)}, jump bins {len(jb)}")
-
-
-def stats_misc(A, eps):
-    S = os.path.join(E3, "stats")
-    # pose-0 height tertiles: base->EE consistency across sampled targets
-    tab = E.keypoint_table(_G)
-    z0 = np.array([tab.table[E.build_e3(CFG, "B0T0", s).ee.row_indices[0], 2] for s in SEEDS])
-    ed = BINS["pose0_height_tertile_edges_m"]
-    grp = np.digitize(z0, ed)
+def slice_trends(A):
+    """Within each figure slice: change of each RMSE from the slice's lowest level (B = 0 or
+    Fixed) to every other level, per controller (paired by seed; Holm within slice x metric x
+    controller), and the rival-minus-C1 difference of that change (Holm within slice x metric x
+    rival)."""
     rows = []
-    bi, ti = MAIN_BASE
-    for m in ("base_iso_ee_pos_peak_pos_excess", "base_iso_ee_pos_int_pos_excess", "base_iso_ee_ori_peak_pos_excess",
-              "base_iso_ee_ori_int_pos_excess", "base_iso_ee_pos_baseline_abs", "base_iso_ee_ori_baseline_abs",
-              "ee_pos_rmse_m", "ee_ori_rmse_rad"):
-        for gi in range(3):
-            sel = grp == gi
-            x = A[m][:, bi, ti][:, sel]
-            for r in ("C3", "C5"):
-                rows.append({"metric": m, "pose0_height_tertile": gi, "n_seeds": int(sel.sum()),
-                             "comparison": f"{r}-C1"} | paired(x[0], x[CTRL.index(r)]))
-    common.write_csv(os.path.join(S, "E3_base_to_ee_by_pose0_height.csv"), rows)
-    # completion and failure summary
+    for name, cells in SLICES.items():
+        ref = idx(cells[0])
+        for m in RMSE:
+            per_c = {c: [] for c in CTRL}
+            dd = {r: [] for r in ("C3", "C5")}
+            for cell in cells[1:]:
+                bi, ti = idx(cell)
+                deg = {}
+                for ci, c in enumerate(CTRL):
+                    x = A[m][ci]
+                    deg[c] = x[bi, ti] - x[ref]
+                    per_c[c].append({"slice": name, "metric": m, "kind": "change_from_reference",
+                                     "controller": c, "condition": cell, "reference": cells[0],
+                                     "level": BLEV[bi] if name == "vs_base_bound" else HZLAB[ti]}
+                                    | paired(x[ref], x[bi, ti]))
+                for r in dd:
+                    dd[r].append({"slice": name, "metric": m, "kind": "rival_change_minus_C1_change",
+                                  "controller": f"{r}-C1", "rival": r, "condition": cell, "reference": cells[0],
+                                  "level": BLEV[bi] if name == "vs_base_bound" else HZLAB[ti]}
+                                 | paired(deg["C1"], deg[r]))
+            for g in per_c.values():
+                for r, h in zip(g, holm([r["p"] for r in g])):
+                    r["p_holm"], r["significant_holm"] = float(h), int(np.isfinite(h) and h < 0.05)
+                rows += g
+            for r in dd:
+                rows += finish_family(dd[r])
+    common.write_csv(os.path.join(E3, "stats", "E3_slice_trends.csv"), rows)
+
+
+def completion(A):
     comp = []
     for ci, c in enumerate(CTRL):
         s = A["survived"][ci]
-        comp.append({"controller": c, "episodes": int(np.isfinite(s).sum()), "completed": int(np.nansum(s)),
-                     "terminated": int(np.isfinite(s).sum() - np.nansum(s))} |
-                    {f"completion_{cid(bi, ti)}": float(np.nanmean(s[bi, ti])) for bi in range(NB) for ti in range(NT)})
-    common.write_csv(os.path.join(S, "E3_completion.csv"), comp)
-    # jump audit from the logged commands (C1 episodes; commands identical across controllers)
-    ja = []
-    for ti in range(1, NT):
-        p = A["mean_jump_pos_m"][0, 0, ti]
-        o = A["mean_jump_ori_rad"][0, 0, ti]
-        n = A["n_targets"][0, 0, ti]
-        ja.append({"ee_level": TLAB[ti], "targets_per_episode_mean": float(np.nanmean(n)),
-                   "episode_mean_jump_pos_m_mean": float(np.nanmean(p)),
-                   "episode_mean_jump_ori_rad_mean": float(np.nanmean(o))})
-    common.write_csv(os.path.join(S, "E3_target_jump_audit.csv"), ja)
+        comp.append({"controller": c, "episodes_expected": NB * NT * NS, "episodes_valid": int(np.isfinite(s).sum()),
+                     "completed": int(np.nansum(s)), "terminated_early": int(np.isfinite(s).sum() - np.nansum(s)),
+                     "missing_or_corrupt": int(NB * NT * NS - np.isfinite(s).sum())}
+                    | {f"completion_{cid(bi, ti)}": float(np.nanmean(s[bi, ti])) if np.isfinite(s[bi, ti]).any()
+                       else float("nan") for bi in range(NB) for ti in range(NT)})
+    common.write_csv(os.path.join(E3, "stats", "E3_completion.csv"), comp)
 
 
 if __name__ == "__main__":

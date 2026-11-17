@@ -2,8 +2,8 @@
 #
 # Run from unitree_mujoco/simulate_python:
 #
-#   python3 deploy_mujoco/b2wz1_hl_transport_uan_v1.py \
-#       configs/b2wz1_hl_transport_uan_v1.yaml
+#   python3 deploy_mujoco/b2wz1_hl_transport_uan.py \
+#       configs/b2wz1_hl_transport_uan.yaml
 #
 # Hierarchy:
 #   MuJoCo/UAN physics = 250 Hz
@@ -17,12 +17,22 @@
 #   Training adds U(-0.01,+0.01) m noise; sim2sim uses noiseless MuJoCo state.
 
 # ---------------- Policies / model ----------------
-# IMPORTANT: verify that low_policy_path is exported from the frozen WBC run
-# actually used by this training file:
-#   2026-09-26_18-52-36_uan_model_4000_multipose20260907/exported/policy.pt
-# An old retrieval ONNX with the same 400-D input is NOT necessarily equivalent.
-# The existing file path below is preserved; change it if it holds old weights.
-low_policy_path: "exported_policy/b2wz1_hl_retrieval_uan/low_policy.onnx"
+# E4 sim2sim alignment (2026-11-14), verified by SHA-256 against Isaac Lab logs:
+#   high_policy_2.onnx  (db783046...) = logs/rsl_rl/unitree_b2wz1_hl_transport_uan/
+#       2026-10-27_14-31-10_single_beta_6d_four_pose_pos_rate_0p1/exported/policy.onnx
+#       (final 6-D policy; its params/env.yaml has
+#        ll_load_run = 2026-10-27_12-47-31_uan_model_4000_multipose20260907).
+#   The frozen WBC of that run is policy_wbc_uan_transport.onnx (6b5aa5de...) =
+#       logs/rsl_rl/unitree_b2wz1_plb_wholebody_UAN_loco_manip/
+#       2026-10-27_12-47-31_uan_model_4000_multipose20260907/exported/policy.onnx
+#   The previous low_policy_path (b2wz1_hl_retrieval_uan/low_policy.onnx,
+#   3b7874b7...) is the 2026-09-07 WBC run, i.e. a DIFFERENT controller from the
+#   one the transport policy was trained on. exported_policy/b2wz1_hl_transport_uan/
+#   low_policy.onnx (47f19872...) is the 2026-09-26 WBC used only by the older
+#   high_policy_1.onnx run; it is not used here either.
+#   UAN model_4000_inference.pt (db53ac18...) is byte-identical to the Isaac Lab
+#   asset B2WZ1_DISK/uan/model_4000_multipose20260907_inference.pt.
+low_policy_path: "exported_policy/b2wz1_wbc_plb_uan/policy_wbc_uan_transport.onnx"
 high_policy_path: "exported_policy/b2wz1_hl_transport_uan/high_policy_2.onnx"
 uan_model_path: "exported_policy/b2wz1_hl_retrieval_uan/model_4000_inference.pt"
 
@@ -187,9 +197,11 @@ ee_low_transition_time_s: 2.0
 canonical_ee_positions: [
   [0.547845, -0.00, 1.116555],
   [0.75,      0.00, 0.35],
-  [0.65,      0.30, 0.80],
-  [0.65,     -0.30, 0.80]
+  [0.50,      0.30, 0.80],
+  [0.50,     -0.30, 0.80]
 ]
+# E4 alignment (2026-11-14): LEFT/RIGHT x corrected 0.65 -> 0.50 to match
+# canonical_ee_positions in params/env.yaml of all three transport runs.
 canonical_ee_yaw: 0.0
 canonical_ee_pitch: -0.06
 canonical_ee_roll: 1.5707963267948966
@@ -215,6 +227,9 @@ puck_height: 0.08
 # Python also computes physically correct cylinder inertia from mass and size.
 puck_mass: 0.50
 # Training puck friction randomization: U(0.30,1.00). Sim2sim uses fixed 0.60.
+# Since the 2026-11-14 alignment the puck geom has priority=1 in the MJCF, so
+# this value IS the effective puck-disk coefficient (previously MuJoCo's max
+# rule silently replaced it with the disk's default 1.0).
 puck_friction: 0.60
 
 # Keep task stochasticity from training while disabling physical DR/noise.

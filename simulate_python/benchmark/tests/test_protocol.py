@@ -128,7 +128,7 @@ class TestIdenticalCommandsAcrossBaselines(unittest.TestCase):
 
     def test_schedules_are_a_function_of_condition_and_seed_alone(self):
         for experiment, conditions in (("E1", ("T1", "T4")), ("E2", ("dynamic",)),
-                                       ("E3", ("B0T0", "B4T4"))):
+                                       ("E3", ("B0T0", "B6T6"))):
             cfg = _cfg(experiment)
             for condition in conditions:
                 a = E.build_scenario(experiment, cfg, condition, 9).arrays()

@@ -1,6 +1,15 @@
 <mujoco model="b2wz1 retrieval scene">
   <include file="b2wz1.xml"/>
 
+  <!--
+    E5 alignment (2026-11-16): MuJoCo's no-slip post-solver. With soft friction
+    alone, a cube squeezed at ~300 N by the jaws "walked" 0.1-0.27 m out of the
+    grasp in < 3 s under ~1 N of inertial load (vibration ratcheting); PhysX
+    Coulomb static friction (mu_eff >= 0.4) holds it. noslip removes this creep
+    (1-8 mm). Integrator etc. remain as set in b2wz1.xml.
+  -->
+  <option noslip_iterations="5"/>
+
   <statistic center="0 0 0.3" extent="2.5"/>
 
   <visual>
@@ -26,14 +35,32 @@
     <!--
       5 cm retrieval cube matching the Isaac Lab task geometry.
       Its pose is overwritten at every episode reset by the deployment script.
+
+      E5 alignment (2026-11-16, see simulate_python/retrieval_experiment/docs/ALIGNMENT_REPORT.md):
+        * mass 0.20 -> 0.10 kg: training holds density at 800 kg/m^3
+          (_apply_object_mass), i.e. 0.10 kg for the nominal 5 cm cube.
+          MuJoCo derives the solid-box inertia m*s^2/6 from the geom.
+        * priority="1": the cube's friction/solref/solimp govern all of its
+          contacts (MuJoCo would otherwise take the element-wise MAX with the
+          other geom; PhysX multiplies, and the training ground / robot
+          nominal coefficients are 1.0, so mu_eff = mu_cube).
+        * solref/solimp: the default soft contact let the training gripper
+          actuator (DCMotor, 30 N m stall, closed target 0 rad) crush 15-31 mm
+          into the cube; time constant 2*dt and impedance 0.99/0.999 keep the
+          squeeze penetration <= 1.5 mm, as for PhysX rigid contacts.
+      The E5 benchmark rebuilds this cube per size and per scenario
+      (retrieval_experiment/simulator.py); these values are the nominal 5 cm case.
     -->
     <body name="retrieval_cube" pos="0.8 0 0.026">
       <freejoint name="retrieval_cube_freejoint"/>
       <geom name="retrieval_cube_geom"
         type="box"
         size="0.025 0.025 0.025"
-        mass="0.20"
+        mass="0.10"
         condim="3"
+        priority="1"
+        solref="0.008 1"
+        solimp="0.99 0.999 0.001 0.5 2"
         friction="1.0 0.005 0.0001"
         material="retrieval_cube_material"/>
     </body>

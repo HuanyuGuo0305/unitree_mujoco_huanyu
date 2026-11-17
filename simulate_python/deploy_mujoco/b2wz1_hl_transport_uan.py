@@ -12,8 +12,18 @@ Matches the updated Isaac Lab four-canonical-pose training task:
   - puck physical radius/height checked against the YAML and compiled MJCF.
 
 Run from unitree_mujoco/simulate_python:
-  python3 deploy_mujoco/b2wz1_hl_transport_uan_v1.py \
-      configs/b2wz1_hl_transport_uan_v1.yaml
+  python3 deploy_mujoco/b2wz1_hl_transport_uan.py \
+      configs/b2wz1_hl_transport_uan.yaml
+
+E4 sim2sim alignment (2026-11-14), see
+simulate_python/transport_experiment/docs/ALIGNMENT_REPORT.md:
+  - frozen WBC path corrected in the YAML (training WBC run 2026-10-27_12-47-31);
+  - LEFT/RIGHT canonical x corrected to 0.50 in the YAML;
+  - puck priority/solimp + multiccd in the MJCF (puck friction now effective);
+  - disk-puck and base contact use the NET contact force between the two
+    bodies, like the Isaac Lab ContactSensor force_matrix_w / net_forces_w;
+  - timeout after max_episode_length - 1 = 149 completed 10-Hz steps, exactly
+    like DirectRLEnv (episode_length_buf >= max_episode_length - 1).
 """
 from __future__ import annotations
 import argparse
@@ -332,6 +342,9 @@ def main():
     # Episode / diagnostics
     # ------------------------------------------------------------------
     episode_length_s = float(cfg["episode_length_s"])
+    # Isaac Lab DirectRLEnv: max_episode_length = ceil(T / step_dt); timeout is
+    # raised when episode_length_buf >= max_episode_length - 1.
+    max_episode_hl_steps = int(math.ceil(round(episode_length_s / hl_control_dt, 9)))
     auto_reset = bool(cfg.get("auto_reset", True))
     terminate_on_puck_drop = bool(cfg.get("terminate_on_puck_drop", True))
     terminate_on_base_contact = bool(cfg.get("terminate_on_base_contact", True))
@@ -588,6 +601,7 @@ def main():
     print(f"Ground geom:       {ground_geom_name} (id={ground_gid}, z=0 plane expected)")
     print(f"Puck inertia scale:{mass_ratio:.3f}x")
     print(f"Settle:            {settle_steps} HL steps = {settle_steps * hl_control_dt:.2f} s")
+    print(f"Episode:           timeout after {max_episode_hl_steps - 1} HL steps (Isaac Lab semantics)")
     print(f"Base ref hold:     {base_ref_min_steps}-{base_ref_max_steps} HL steps")
     print(f"EE ref hold:       {ee_ref_min_steps}-{ee_ref_max_steps} HL steps (uniform)")
     print(
@@ -645,6 +659,7 @@ def main():
     puck_drop = False
     base_contact = False
     episode_start_time = 0.0
+    episode_hl_steps = 0
     episode_index = 0
     # Feature-major history, exactly matching the training flattening.
     ll_feature_dims = [3, 3, 3, 9, 12, 6, 12, 6, 4, 22]
@@ -785,29 +800,42 @@ def main():
             dtype=np.float32,
         )
     def contact_force_for_pair(geom_a: int, geom_b: int) -> float:
+        """Norm of the NET world-frame contact force between two geoms.
+
+        Mirrors the PhysX filtered force matrix (net force between two bodies).
+        With multiccd the flat puck/disk contact is split over several points,
+        so the net force (not the per-point maximum) is the comparable quantity.
+        """
         force6 = np.zeros(6, dtype=np.float64)
-        best = 0.0
+        net = np.zeros(3, dtype=np.float64)
         for ci in range(d.ncon):
             c = d.contact[ci]
             if (c.geom1 == geom_a and c.geom2 == geom_b) or (
                 c.geom1 == geom_b and c.geom2 == geom_a
             ):
                 mujoco.mj_contactForce(m, d, ci, force6)
-                best = max(best, float(np.linalg.norm(force6[:3])))
-        return best
+                # mj_contactForce/frame give the force acting ON geom2.
+                f_w = c.frame.reshape(3, 3).T @ force6[:3]
+                net += f_w if c.geom2 == geom_b else -f_w
+        return float(np.linalg.norm(net))
     def puck_disk_contact_now() -> tuple[bool, float]:
         f = contact_force_for_pair(disk_gid, puck_gid)
         return f > puck_disk_contact_force_threshold, f
     def base_contact_now() -> tuple[bool, float]:
+        """Net world-frame contact force acting on base_link (any partner)."""
         force6 = np.zeros(6, dtype=np.float64)
-        best = 0.0
+        net = np.zeros(3, dtype=np.float64)
         for ci in range(d.ncon):
             c = d.contact[ci]
             b1 = int(m.geom_bodyid[c.geom1])
             b2 = int(m.geom_bodyid[c.geom2])
             if b1 == base_bid or b2 == base_bid:
                 mujoco.mj_contactForce(m, d, ci, force6)
-                best = max(best, float(np.linalg.norm(force6[:3])))
+                f_w = c.frame.reshape(3, 3).T @ force6[:3]
+                # Force reported on geom2 by geom1 convention; sign it so the
+                # sum is the force acting ON base_link.
+                net += f_w if b2 == base_bid else -f_w
+        best = float(np.linalg.norm(net))
         return best > base_contact_force_threshold, best
     def sample_base_velocity_reference():
         nonlocal base_velocity_ref, base_ref_steps_remaining
@@ -1164,7 +1192,7 @@ def main():
         nonlocal raw_hl_action, effective_hl_action, executed_hl_action
         nonlocal base_command, kp0_cmd, ee_yaw_cmd, ee_pitch_cmd, ee_roll_cmd, ee_cmd_plb_current
         nonlocal puck_no_contact_steps, puck_drop, base_contact
-        nonlocal episode_start_time, episode_index
+        nonlocal episode_start_time, episode_index, episode_hl_steps
         d.qpos[:] = 0.0
         d.qvel[:] = 0.0
         d.ctrl[:] = 0.0
@@ -1217,6 +1245,7 @@ def main():
         fill_histories(ll_histories, ll_frame0, ll_feature_dims, ll_history_length)
         fill_histories(hl_histories, hl_frame0, hl_feature_dims, hl_history_length)
         episode_start_time = sim_time
+        episode_hl_steps = 0
         episode_index += 1
         puck_d = get_puck_pos_disk()
         print(
@@ -1367,7 +1396,8 @@ def main():
                         puck_no_contact_steps += 1
                     puck_drop = puck_no_contact_steps >= puck_drop_no_contact_steps
                     base_contact, base_force = base_contact_now()
-                    timeout = (sim_time - episode_start_time) >= episode_length_s - 1.0e-9
+                    episode_hl_steps += 1
+                    timeout = episode_hl_steps >= max_episode_hl_steps - 1
                     reset_reason = None
                     if terminate_on_base_contact and base_contact:
                         reset_reason = f"base_contact({base_force:.2f}N)"

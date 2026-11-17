@@ -1,0 +1,1254 @@
+{
+ "V1_squeeze_hold": [
+  {
+   "side": 0.04,
+   "density": 400.0,
+   "mass_kg": 0.025600000000000005,
+   "jaw_mu": 1.0,
+   "final_angle_deg": -31.634680824535888,
+   "f_stator_N": 447.58118915623743,
+   "f_mover_N": 447.66853209641727,
+   "dual_contact": true,
+   "max_penetration_mm": 1.2604160187833686,
+   "steady_penetration_mm": 1.2060951577721364,
+   "slip_mm_3s": 0.012641793303787303,
+   "cube_in_stator_frame_mm": [
+    129.5,
+    0.0,
+    10.8
+   ],
+   "cube_weight_N": 0.2511360000000001,
+   "grasp_held": true,
+   "steady_penetration_ok": true,
+   "pass": true
+  },
+  {
+   "side": 0.04,
+   "density": 1200.0,
+   "mass_kg": 0.07680000000000001,
+   "jaw_mu": 1.0,
+   "final_angle_deg": -32.126039093546076,
+   "f_stator_N": 437.10619378200676,
+   "f_mover_N": 437.31672819344953,
+   "dual_contact": true,
+   "max_penetration_mm": 1.2603742496558759,
+   "steady_penetration_mm": 0.7750046786602383,
+   "slip_mm_3s": 0.02051084379744369,
+   "cube_in_stator_frame_mm": [
+    129.4,
+    -0.0,
+    11.0
+   ],
+   "cube_weight_N": 0.7534080000000001,
+   "grasp_held": true,
+   "steady_penetration_ok": true,
+   "pass": true
+  },
+  {
+   "side": 0.05,
+   "density": 800.0,
+   "mass_kg": 0.10000000000000002,
+   "jaw_mu": 1.0,
+   "final_angle_deg": -41.66321943293298,
+   "f_stator_N": 457.88147940689583,
+   "f_mover_N": 458.0328807313276,
+   "dual_contact": true,
+   "max_penetration_mm": 1.2381926691228413,
+   "steady_penetration_mm": 0.812366019728364,
+   "slip_mm_3s": 0.08681532465275131,
+   "cube_in_stator_frame_mm": [
+    129.3,
+    -0.1,
+    16.1
+   ],
+   "cube_weight_N": 0.9810000000000002,
+   "grasp_held": true,
+   "steady_penetration_ok": true,
+   "pass": true
+  },
+  {
+   "side": 0.06,
+   "density": 400.0,
+   "mass_kg": 0.08639999999999999,
+   "jaw_mu": 1.0,
+   "final_angle_deg": -51.632236268701874,
+   "f_stator_N": 439.2324057789257,
+   "f_mover_N": 439.3850279612537,
+   "dual_contact": true,
+   "max_penetration_mm": 0.8858421459029969,
+   "steady_penetration_mm": 0.8858421459029969,
+   "slip_mm_3s": 0.12324796058004327,
+   "cube_in_stator_frame_mm": [
+    129.7,
+    0.1,
+    21.0
+   ],
+   "cube_weight_N": 0.847584,
+   "grasp_held": true,
+   "steady_penetration_ok": true,
+   "pass": true
+  },
+  {
+   "side": 0.06,
+   "density": 1200.0,
+   "mass_kg": 0.25919999999999993,
+   "jaw_mu": 1.0,
+   "final_angle_deg": -51.99478614147817,
+   "f_stator_N": 438.0546830389141,
+   "f_mover_N": 438.3647527801689,
+   "dual_contact": true,
+   "max_penetration_mm": 0.45952105950112954,
+   "steady_penetration_mm": 0.45952105950112954,
+   "slip_mm_3s": 0.11211717275666773,
+   "cube_in_stator_frame_mm": [
+    129.4,
+    0.1,
+    21.2
+   ],
+   "cube_weight_N": 2.5427519999999992,
+   "grasp_held": true,
+   "steady_penetration_ok": true,
+   "pass": true
+  },
+  {
+   "side": 0.04,
+   "density": 400.0,
+   "mass_kg": 0.025600000000000005,
+   "jaw_mu": 0.4,
+   "final_angle_deg": -32.3796749902894,
+   "f_stator_N": 430.4653957742695,
+   "f_mover_N": 430.4495288094613,
+   "dual_contact": true,
+   "max_penetration_mm": 1.6617485728394925,
+   "steady_penetration_mm": 0.6187071203202654,
+   "slip_mm_3s": 0.23762963534884227,
+   "cube_in_stator_frame_mm": [
+    129.5,
+    0.2,
+    11.8
+   ],
+   "cube_weight_N": 0.2511360000000001,
+   "grasp_held": true,
+   "steady_penetration_ok": true,
+   "pass": true
+  },
+  {
+   "side": 0.06,
+   "density": 1200.0,
+   "mass_kg": 0.25919999999999993,
+   "jaw_mu": 0.4,
+   "final_angle_deg": -49.62322795286727,
+   "f_stator_N": 476.112075349767,
+   "f_mover_N": 476.2137935943619,
+   "dual_contact": true,
+   "max_penetration_mm": 2.897311625466391,
+   "steady_penetration_mm": 0.1893800529812716,
+   "slip_mm_3s": 0.07747552479351039,
+   "cube_in_stator_frame_mm": [
+    133.7,
+    0.6,
+    26.3
+   ],
+   "cube_weight_N": 2.5427519999999992,
+   "grasp_held": true,
+   "steady_penetration_ok": true,
+   "pass": true
+  },
+  {
+   "side": 0.04,
+   "density": 400.0,
+   "mass_kg": 0.025600000000000005,
+   "jaw_mu": 2.4,
+   "final_angle_deg": -27.196255625012558,
+   "f_stator_N": 421.51569751674987,
+   "f_mover_N": 421.5644836558418,
+   "dual_contact": true,
+   "max_penetration_mm": 5.4025914280018705,
+   "steady_penetration_mm": 5.4025914280018705,
+   "slip_mm_3s": 0.0056788829143828495,
+   "cube_in_stator_frame_mm": [
+    130.7,
+    0.0,
+    8.9
+   ],
+   "cube_weight_N": 0.2511360000000001,
+   "grasp_held": true,
+   "steady_penetration_ok": false,
+   "pass": false
+  },
+  {
+   "side": 0.06,
+   "density": 1200.0,
+   "mass_kg": 0.25919999999999993,
+   "jaw_mu": 2.4,
+   "final_angle_deg": -51.05884704872203,
+   "f_stator_N": 438.0417008011888,
+   "f_mover_N": 438.82360146852625,
+   "dual_contact": true,
+   "max_penetration_mm": 1.0691804132200713,
+   "steady_penetration_mm": 1.0691804132200713,
+   "slip_mm_3s": 0.06838557785497161,
+   "cube_in_stator_frame_mm": [
+    129.9,
+    0.1,
+    20.5
+   ],
+   "cube_weight_N": 2.5427519999999992,
+   "grasp_held": true,
+   "steady_penetration_ok": true,
+   "pass": true
+  },
+  {
+   "side": 0.04304182744728239,
+   "density": 823.6672834239596,
+   "mass_kg": 0.0656786053455921,
+   "jaw_mu": 1.2000000000000002,
+   "final_angle_deg": -34.6654851603154,
+   "f_stator_N": 467.72819994632624,
+   "f_mover_N": 467.4663341171242,
+   "dual_contact": true,
+   "max_penetration_mm": 1.297572027377475,
+   "steady_penetration_mm": 0.9178810998351343,
+   "slip_mm_3s": 0.09396204989637724,
+   "cube_in_stator_frame_mm": [
+    129.4,
+    -0.1,
+    12.4
+   ],
+   "cube_weight_N": 0.6443071184402586,
+   "grasp_held": true,
+   "steady_penetration_ok": true,
+   "pass": true
+  },
+  {
+   "side": 0.048041827447282394,
+   "density": 823.6672834239596,
+   "mass_kg": 0.09132935130968155,
+   "jaw_mu": 1.2000000000000002,
+   "final_angle_deg": -39.64648070382721,
+   "f_stator_N": 469.80830637819207,
+   "f_mover_N": 470.16582442176826,
+   "dual_contact": true,
+   "max_penetration_mm": 0.939158642985766,
+   "steady_penetration_mm": 0.939158642985766,
+   "slip_mm_3s": 0.06830517571351616,
+   "cube_in_stator_frame_mm": [
+    129.6,
+    -0.0,
+    15.0
+   ],
+   "cube_weight_N": 0.895940936347976,
+   "grasp_held": true,
+   "steady_penetration_ok": true,
+   "pass": true
+  },
+  {
+   "side": 0.05304182744728239,
+   "density": 823.6672834239596,
+   "mass_kg": 0.12291566949940481,
+   "jaw_mu": 1.2000000000000002,
+   "final_angle_deg": -44.46759604387173,
+   "f_stator_N": 468.7461570002469,
+   "f_mover_N": 469.18161717339524,
+   "dual_contact": true,
+   "max_penetration_mm": 1.5003405957323521,
+   "steady_penetration_mm": 0.8579524616246377,
+   "slip_mm_3s": 0.0964820979469316,
+   "cube_in_stator_frame_mm": [
+    129.4,
+    -0.1,
+    17.5
+   ],
+   "cube_weight_N": 1.2058027177891613,
+   "grasp_held": true,
+   "steady_penetration_ok": true,
+   "pass": true
+  },
+  {
+   "side": 0.05804182744728239,
+   "density": 823.6672834239596,
+   "mass_kg": 0.1610553103773299,
+   "jaw_mu": 1.2000000000000002,
+   "final_angle_deg": -49.51742463137958,
+   "f_stator_N": 431.64662957894274,
+   "f_mover_N": 431.55083008010195,
+   "dual_contact": true,
+   "max_penetration_mm": 0.756659478519715,
+   "steady_penetration_mm": 0.5994635024894206,
+   "slip_mm_3s": 0.0062168676946736095,
+   "cube_in_stator_frame_mm": [
+    129.5,
+    -0.0,
+    20.1
+   ],
+   "cube_weight_N": 1.5799525948016064,
+   "grasp_held": true,
+   "steady_penetration_ok": true,
+   "pass": true
+  },
+  {
+   "side": 0.042098218114592585,
+   "density": 1006.1500376186292,
+   "mass_kg": 0.07506783478139915,
+   "jaw_mu": 1.2000000000000002,
+   "final_angle_deg": -34.013840460397844,
+   "f_stator_N": 460.23067271751705,
+   "f_mover_N": 460.52681432504255,
+   "dual_contact": true,
+   "max_penetration_mm": 0.8609823267474511,
+   "steady_penetration_mm": 0.8609823267474511,
+   "slip_mm_3s": 0.03947290599903752,
+   "cube_in_stator_frame_mm": [
+    129.6,
+    -0.0,
+    12.0
+   ],
+   "cube_weight_N": 0.7364154592055258,
+   "grasp_held": true,
+   "steady_penetration_ok": true,
+   "pass": true
+  },
+  {
+   "side": 0.04709821811459259,
+   "density": 1006.1500376186292,
+   "mass_kg": 0.10511777932507123,
+   "jaw_mu": 1.2000000000000002,
+   "final_angle_deg": -38.705407020707625,
+   "f_stator_N": 469.23985141065936,
+   "f_mover_N": 469.62950311639594,
+   "dual_contact": true,
+   "max_penetration_mm": 1.1240270110509354,
+   "steady_penetration_mm": 0.8856878636799075,
+   "slip_mm_3s": 0.0262662220923469,
+   "cube_in_stator_frame_mm": [
+    129.5,
+    -0.0,
+    14.5
+   ],
+   "cube_weight_N": 1.0312054151789487,
+   "grasp_held": true,
+   "steady_penetration_ok": true,
+   "pass": true
+  },
+  {
+   "side": 0.05209821811459259,
+   "density": 1006.1500376186292,
+   "mass_kg": 0.1422759049579084,
+   "jaw_mu": 1.2000000000000002,
+   "final_angle_deg": -43.742810526107725,
+   "f_stator_N": 442.0867693487159,
+   "f_mover_N": 442.10443351287137,
+   "dual_contact": true,
+   "max_penetration_mm": 0.8032285093761914,
+   "steady_penetration_mm": 0.8032285093761914,
+   "slip_mm_3s": 0.07534722739555992,
+   "cube_in_stator_frame_mm": [
+    129.6,
+    0.1,
+    17.1
+   ],
+   "cube_weight_N": 1.3957266276370814,
+   "grasp_held": true,
+   "steady_penetration_ok": true,
+   "pass": true
+  },
+  {
+   "side": 0.05709821811459259,
+   "density": 1006.1500376186292,
+   "mass_kg": 0.18729682420812482,
+   "jaw_mu": 1.2000000000000002,
+   "final_angle_deg": -48.58712001076593,
+   "f_stator_N": 458.85673106568174,
+   "f_mover_N": 459.39748785440275,
+   "dual_contact": true,
+   "max_penetration_mm": 1.2923004289420164,
+   "steady_penetration_mm": 0.6992446617540855,
+   "slip_mm_3s": 0.07743387823740581,
+   "cube_in_stator_frame_mm": [
+    129.3,
+    -0.1,
+    19.6
+   ],
+   "cube_weight_N": 1.8373818454817046,
+   "grasp_held": true,
+   "steady_penetration_ok": true,
+   "pass": true
+  }
+ ],
+ "V1_reference_default_contact": [
+  {
+   "side": 0.04,
+   "density": 400.0,
+   "mass_kg": 0.025600000000000005,
+   "jaw_mu": 1.0,
+   "final_angle_deg": -4.374811860750838,
+   "f_stator_N": 56.25957512139188,
+   "f_mover_N": 56.21056030042472,
+   "dual_contact": true,
+   "max_penetration_mm": 21.568485296625727,
+   "steady_penetration_mm": 21.568485296625727,
+   "slip_mm_3s": 0.11354083555290266,
+   "cube_in_stator_frame_mm": [
+    139.1,
+    0.7,
+    -8.4
+   ],
+   "cube_weight_N": 0.2511360000000001
+  },
+  {
+   "side": 0.05,
+   "density": 800.0,
+   "mass_kg": 0.10000000000000002,
+   "jaw_mu": 1.0,
+   "final_angle_deg": -20.28165414870426,
+   "f_stator_N": 286.0598029892726,
+   "f_mover_N": 286.2493168880077,
+   "dual_contact": true,
+   "max_penetration_mm": 16.239984158990424,
+   "steady_penetration_mm": 16.239984158990424,
+   "slip_mm_3s": 0.38013955781439285,
+   "cube_in_stator_frame_mm": [
+    139.7,
+    0.3,
+    4.0
+   ],
+   "cube_weight_N": 0.9810000000000002
+  },
+  {
+   "side": 0.06,
+   "density": 1200.0,
+   "mass_kg": 0.25919999999999993,
+   "jaw_mu": 1.0,
+   "final_angle_deg": -35.895070758491755,
+   "f_stator_N": 416.3413089842953,
+   "f_mover_N": 415.82798120537655,
+   "dual_contact": true,
+   "max_penetration_mm": 14.327323780743557,
+   "steady_penetration_mm": 14.327323780743557,
+   "slip_mm_3s": 2.9265766167550815,
+   "cube_in_stator_frame_mm": [
+    137.1,
+    2.0,
+    16.9
+   ],
+   "cube_weight_N": 2.5427519999999992
+  }
+ ],
+ "V1_reference_predeploy_gripper": [
+  {
+   "side": 0.04,
+   "density": 400.0,
+   "mass_kg": 0.025600000000000005,
+   "jaw_mu": 1.0,
+   "final_angle_deg": -30.75843323857531,
+   "f_stator_N": 6.39405334299155,
+   "f_mover_N": 6.3372846037472765,
+   "dual_contact": true,
+   "max_penetration_mm": 2.342833611761461,
+   "steady_penetration_mm": 2.342833611761461,
+   "slip_mm_3s": 0.05353587678882577,
+   "cube_in_stator_frame_mm": [
+    129.9,
+    -0.0,
+    10.5
+   ],
+   "cube_weight_N": 0.2511360000000001
+  },
+  {
+   "side": 0.05,
+   "density": 800.0,
+   "mass_kg": 0.10000000000000002,
+   "jaw_mu": 1.0,
+   "final_angle_deg": -35.04684939317527,
+   "f_stator_N": 73.28101913438451,
+   "f_mover_N": 73.1002989655156,
+   "dual_contact": true,
+   "max_penetration_mm": 7.187619825261588,
+   "steady_penetration_mm": 7.187619825261588,
+   "slip_mm_3s": 0.6132929467687289,
+   "cube_in_stator_frame_mm": [
+    132.5,
+    0.2,
+    14.3
+   ],
+   "cube_weight_N": 0.9810000000000002
+  },
+  {
+   "side": 0.06,
+   "density": 1200.0,
+   "mass_kg": 0.25919999999999993,
+   "jaw_mu": 1.0,
+   "final_angle_deg": -44.718814656225405,
+   "f_stator_N": 229.64824700497695,
+   "f_mover_N": 229.12867415236303,
+   "dual_contact": true,
+   "max_penetration_mm": 6.835222327426325,
+   "steady_penetration_mm": 6.835222327426325,
+   "slip_mm_3s": 0.40603909707896135,
+   "cube_in_stator_frame_mm": [
+    132.7,
+    0.6,
+    18.8
+   ],
+   "cube_weight_N": 2.5427519999999992
+  }
+ ],
+ "V2_friction": [
+  {
+   "side": 0.04,
+   "density": 400.0,
+   "mu": 0.4,
+   "theta_deg": 15.801409486351812,
+   "displacement_m": 4.9662213970513847e-05,
+   "slid": false,
+   "expected_slide": false,
+   "pass": true
+  },
+  {
+   "side": 0.04,
+   "density": 400.0,
+   "mu": 0.4,
+   "theta_deg": 27.80140948635181,
+   "displacement_m": 0.5487647331830456,
+   "slid": true,
+   "expected_slide": true,
+   "pass": true
+  },
+  {
+   "side": 0.04,
+   "density": 400.0,
+   "mu": 0.7,
+   "theta_deg": 28.992020198558663,
+   "displacement_m": 0.000997779597558352,
+   "slid": false,
+   "expected_slide": false,
+   "pass": true
+  },
+  {
+   "side": 0.04,
+   "density": 400.0,
+   "mu": 0.7,
+   "theta_deg": 40.99202019855866,
+   "displacement_m": 0.6542509765779183,
+   "slid": true,
+   "expected_slide": true,
+   "pass": true
+  },
+  {
+   "side": 0.04,
+   "density": 400.0,
+   "mu": 0.9,
+   "theta_deg": 35.98721249581666,
+   "displacement_m": 0.0009505737008080697,
+   "slid": false,
+   "expected_slide": false,
+   "pass": true
+  },
+  {
+   "side": 0.04,
+   "density": 400.0,
+   "mu": 0.9,
+   "theta_deg": 47.98721249581666,
+   "displacement_m": 1.273237986115941,
+   "slid": true,
+   "expected_slide": true,
+   "pass": true
+  },
+  {
+   "side": 0.05,
+   "density": 800.0,
+   "mu": 0.4,
+   "theta_deg": 15.801409486351812,
+   "displacement_m": 4.9662213921664033e-05,
+   "slid": false,
+   "expected_slide": false,
+   "pass": true
+  },
+  {
+   "side": 0.05,
+   "density": 800.0,
+   "mu": 0.4,
+   "theta_deg": 27.80140948635181,
+   "displacement_m": 0.5489676886630304,
+   "slid": true,
+   "expected_slide": true,
+   "pass": true
+  },
+  {
+   "side": 0.05,
+   "density": 800.0,
+   "mu": 0.7,
+   "theta_deg": 28.992020198558663,
+   "displacement_m": 0.0009971191525304415,
+   "slid": false,
+   "expected_slide": false,
+   "pass": true
+  },
+  {
+   "side": 0.05,
+   "density": 800.0,
+   "mu": 0.7,
+   "theta_deg": 40.99202019855866,
+   "displacement_m": 0.6126636706054751,
+   "slid": true,
+   "expected_slide": true,
+   "pass": true
+  },
+  {
+   "side": 0.05,
+   "density": 800.0,
+   "mu": 0.9,
+   "theta_deg": 35.98721249581666,
+   "displacement_m": 0.0009562550640017526,
+   "slid": false,
+   "expected_slide": false,
+   "pass": true
+  },
+  {
+   "side": 0.05,
+   "density": 800.0,
+   "mu": 0.9,
+   "theta_deg": 47.98721249581666,
+   "displacement_m": 1.0817255799613432,
+   "slid": true,
+   "expected_slide": true,
+   "pass": true
+  },
+  {
+   "side": 0.06,
+   "density": 1200.0,
+   "mu": 0.4,
+   "theta_deg": 15.801409486351812,
+   "displacement_m": 4.9662213887913254e-05,
+   "slid": false,
+   "expected_slide": false,
+   "pass": true
+  },
+  {
+   "side": 0.06,
+   "density": 1200.0,
+   "mu": 0.4,
+   "theta_deg": 27.80140948635181,
+   "displacement_m": 0.5528017901759905,
+   "slid": true,
+   "expected_slide": true,
+   "pass": true
+  },
+  {
+   "side": 0.06,
+   "density": 1200.0,
+   "mu": 0.7,
+   "theta_deg": 28.992020198558663,
+   "displacement_m": 0.000996678574816508,
+   "slid": false,
+   "expected_slide": false,
+   "pass": true
+  },
+  {
+   "side": 0.06,
+   "density": 1200.0,
+   "mu": 0.7,
+   "theta_deg": 40.99202019855866,
+   "displacement_m": 0.6390103405034804,
+   "slid": true,
+   "expected_slide": true,
+   "pass": true
+  },
+  {
+   "side": 0.06,
+   "density": 1200.0,
+   "mu": 0.9,
+   "theta_deg": 35.98721249581666,
+   "displacement_m": 0.0009600165725903642,
+   "slid": false,
+   "expected_slide": false,
+   "pass": true
+  },
+  {
+   "side": 0.06,
+   "density": 1200.0,
+   "mu": 0.9,
+   "theta_deg": 47.98721249581666,
+   "displacement_m": 1.1389098429332947,
+   "slid": true,
+   "expected_slide": true,
+   "pass": true
+  }
+ ],
+ "V3_drop": [
+  {
+   "side": 0.04,
+   "density": 400.0,
+   "rebound_mm": 0.18090279716120872,
+   "rest_offset_mm": -0.0015982604035583159,
+   "pass": true
+  },
+  {
+   "side": 0.05,
+   "density": 800.0,
+   "rebound_mm": 0.18090279719029656,
+   "rest_offset_mm": -0.0015982604035583159,
+   "pass": true
+  },
+  {
+   "side": 0.06,
+   "density": 1200.0,
+   "rebound_mm": 0.18090279704490245,
+   "rest_offset_mm": -0.0015982604035583159,
+   "pass": true
+  }
+ ],
+ "V1_documented_penetration_exceedances": {
+  "cases": [
+   {
+    "side": 0.04,
+    "density": 400.0,
+    "mass_kg": 0.025600000000000005,
+    "jaw_mu": 2.4,
+    "steady_penetration_mm": 5.4025914280018705,
+    "max_penetration_mm": 5.4025914280018705,
+    "final_angle_deg": -27.196255625012558
+   }
+  ],
+  "cause": "MuJoCo's time-constant contact parameterisation scales contact stiffness with the effective mass, and at high jaw friction the tangential constraints lock the cube in an unseated multi-contact configuration; the ~440 N stall squeeze is then resolved by distributed 1-5 mm overlaps. Present already for the training-nominal 5 cm / 800 kg/m^3 cube at jaw mu 2.4 (1.6-3.4 mm over placements) and larger for lighter cubes. The grasp is still established and held. Not corrected: removing it requires re-parameterising the validated contact stiffness (excluded by the E5 protocol)."
+ },
+ "V4_ood_extremes": {
+  "implementation_checks": [
+   {
+    "side": 0.03,
+    "density": 400.0,
+    "mass_kg": 0.010799999999999999,
+    "mass_ok": true,
+    "inertia_ok": true,
+    "geometry_ok": true,
+    "coulomb_ok": true,
+    "rebound_mm": 0.18090279704490939,
+    "rest_offset_mm": -0.0015982604035565812,
+    "pass": true
+   },
+   {
+    "side": 0.03,
+    "density": 1200.0,
+    "mass_kg": 0.03239999999999999,
+    "mass_ok": true,
+    "inertia_ok": true,
+    "geometry_ok": true,
+    "coulomb_ok": true,
+    "rebound_mm": 0.18090279713213475,
+    "rest_offset_mm": -0.0015982604035565812,
+    "pass": true
+   },
+   {
+    "side": 0.07,
+    "density": 400.0,
+    "mass_kg": 0.13720000000000004,
+    "mass_ok": true,
+    "inertia_ok": true,
+    "geometry_ok": true,
+    "coulomb_ok": true,
+    "rebound_mm": 0.180902797132107,
+    "rest_offset_mm": -0.0015982604035652548,
+    "pass": true
+   },
+   {
+    "side": 0.07,
+    "density": 1200.0,
+    "mass_kg": 0.41160000000000013,
+    "mass_ok": true,
+    "inertia_ok": true,
+    "geometry_ok": true,
+    "coulomb_ok": true,
+    "rebound_mm": 0.18090279710301915,
+    "rest_offset_mm": -0.0015982604035652548,
+    "pass": true
+   }
+  ],
+  "grasp_behaviour": [
+   {
+    "side": 0.03,
+    "density": 400.0,
+    "mass_kg": 0.010799999999999999,
+    "jaw_mu": 1.0,
+    "final_angle_deg": -23.05792730700459,
+    "f_stator_N": 356.23501916399346,
+    "f_mover_N": 356.2396340077429,
+    "dual_contact": true,
+    "max_penetration_mm": 1.7143536233245853,
+    "steady_penetration_mm": 1.7143536233245853,
+    "slip_mm_3s": 0.1302571794938932,
+    "cube_in_stator_frame_mm": [
+     129.5,
+     0.2,
+     5.7
+    ],
+    "cube_weight_N": 0.105948,
+    "grasp_held": true
+   },
+   {
+    "side": 0.03,
+    "density": 400.0,
+    "mass_kg": 0.010799999999999999,
+    "jaw_mu": 0.4,
+    "final_angle_deg": -23.863001433181132,
+    "f_stator_N": 374.80761404597496,
+    "f_mover_N": 374.79336595434296,
+    "dual_contact": true,
+    "max_penetration_mm": 0.868500427367282,
+    "steady_penetration_mm": 0.868500427367282,
+    "slip_mm_3s": 0.03400513313007991,
+    "cube_in_stator_frame_mm": [
+     129.4,
+     0.0,
+     6.3
+    ],
+    "cube_weight_N": 0.105948,
+    "grasp_held": true
+   },
+   {
+    "side": 0.03,
+    "density": 400.0,
+    "mass_kg": 0.010799999999999999,
+    "jaw_mu": 2.4,
+    "final_angle_deg": -16.59881987608419,
+    "f_stator_N": 267.5092845896109,
+    "f_mover_N": 267.48767896043955,
+    "dual_contact": true,
+    "max_penetration_mm": 7.82024134394237,
+    "steady_penetration_mm": 7.82024134394237,
+    "slip_mm_3s": 0.060278272350525144,
+    "cube_in_stator_frame_mm": [
+     131.0,
+     0.3,
+     3.1
+    ],
+    "cube_weight_N": 0.105948,
+    "grasp_held": true
+   },
+   {
+    "side": 0.03,
+    "density": 1200.0,
+    "mass_kg": 0.03239999999999999,
+    "jaw_mu": 1.0,
+    "final_angle_deg": -23.485901816346438,
+    "f_stator_N": 366.9401895820048,
+    "f_mover_N": 366.88723428236835,
+    "dual_contact": true,
+    "max_penetration_mm": 1.0417505844374377,
+    "steady_penetration_mm": 1.0417505844374377,
+    "slip_mm_3s": 0.052432603506155424,
+    "cube_in_stator_frame_mm": [
+     129.5,
+     0.0,
+     5.9
+    ],
+    "cube_weight_N": 0.3178439999999999,
+    "grasp_held": true
+   },
+   {
+    "side": 0.03,
+    "density": 1200.0,
+    "mass_kg": 0.03239999999999999,
+    "jaw_mu": 0.4,
+    "final_angle_deg": -24.302555241956036,
+    "f_stator_N": 382.42479066651214,
+    "f_mover_N": 382.4373612792433,
+    "dual_contact": true,
+    "max_penetration_mm": 1.7071793496588092,
+    "steady_penetration_mm": 0.31024874571395805,
+    "slip_mm_3s": 0.031053295204291745,
+    "cube_in_stator_frame_mm": [
+     129.5,
+     0.0,
+     6.8
+    ],
+    "cube_weight_N": 0.3178439999999999,
+    "grasp_held": true
+   },
+   {
+    "side": 0.03,
+    "density": 1200.0,
+    "mass_kg": 0.03239999999999999,
+    "jaw_mu": 2.4,
+    "final_angle_deg": -21.221504548475863,
+    "f_stator_N": 335.7437292719943,
+    "f_mover_N": 335.6900484552435,
+    "dual_contact": true,
+    "max_penetration_mm": 3.635160521274813,
+    "steady_penetration_mm": 3.635160521274813,
+    "slip_mm_3s": 0.13100350332355173,
+    "cube_in_stator_frame_mm": [
+     129.9,
+     -0.0,
+     4.8
+    ],
+    "cube_weight_N": 0.3178439999999999,
+    "grasp_held": true
+   },
+   {
+    "side": 0.07,
+    "density": 400.0,
+    "mass_kg": 0.13720000000000004,
+    "jaw_mu": 1.0,
+    "final_angle_deg": -37.655797198936014,
+    "f_stator_N": 0.0,
+    "f_mover_N": 0.0,
+    "dual_contact": false,
+    "max_penetration_mm": 0.67679440025647,
+    "steady_penetration_mm": 0.67679440025647,
+    "slip_mm_3s": 77.05376393314866,
+    "cube_in_stator_frame_mm": [
+     178.4,
+     -65.3,
+     31.1
+    ],
+    "cube_weight_N": 1.3459320000000006,
+    "grasp_held": false
+   },
+   {
+    "side": 0.07,
+    "density": 400.0,
+    "mass_kg": 0.13720000000000004,
+    "jaw_mu": 0.4,
+    "final_angle_deg": -5.167780953361488e-08,
+    "f_stator_N": 0.0,
+    "f_mover_N": 0.0,
+    "dual_contact": false,
+    "max_penetration_mm": 13.046674848803463,
+    "steady_penetration_mm": 13.046674848803463,
+    "slip_mm_3s": 44159.54277238658,
+    "cube_in_stator_frame_mm": [
+     600.3,
+     -44160.0,
+     -1019.9
+    ],
+    "cube_weight_N": 1.3459320000000006,
+    "grasp_held": false
+   },
+   {
+    "side": 0.07,
+    "density": 400.0,
+    "mass_kg": 0.13720000000000004,
+    "jaw_mu": 2.4,
+    "final_angle_deg": -59.09324265723817,
+    "f_stator_N": 419.6705958959189,
+    "f_mover_N": 419.86769927734997,
+    "dual_contact": true,
+    "max_penetration_mm": 1.0735417053335263,
+    "steady_penetration_mm": 1.0735417053335263,
+    "slip_mm_3s": 0.06964538914380443,
+    "cube_in_stator_frame_mm": [
+     129.8,
+     -0.1,
+     25.2
+    ],
+    "cube_weight_N": 1.3459320000000006,
+    "grasp_held": true
+   },
+   {
+    "side": 0.07,
+    "density": 1200.0,
+    "mass_kg": 0.41160000000000013,
+    "jaw_mu": 1.0,
+    "final_angle_deg": -54.584265926753424,
+    "f_stator_N": 383.42571863223765,
+    "f_mover_N": 383.52967619550986,
+    "dual_contact": true,
+    "max_penetration_mm": 0.4914353970337633,
+    "steady_penetration_mm": 0.4914353970337633,
+    "slip_mm_3s": 8.586310194340976,
+    "cube_in_stator_frame_mm": [
+     143.2,
+     -4.5,
+     27.6
+    ],
+    "cube_weight_N": 4.037796000000002,
+    "grasp_held": false
+   },
+   {
+    "side": 0.07,
+    "density": 1200.0,
+    "mass_kg": 0.41160000000000013,
+    "jaw_mu": 0.4,
+    "final_angle_deg": -5.169130330639686e-08,
+    "f_stator_N": 0.0,
+    "f_mover_N": 0.0,
+    "dual_contact": false,
+    "max_penetration_mm": 6.083722446921902,
+    "steady_penetration_mm": 6.083722446921902,
+    "slip_mm_3s": 43734.91774560203,
+    "cube_in_stator_frame_mm": [
+     936.7,
+     -43722.7,
+     -305.7
+    ],
+    "cube_weight_N": 4.037796000000002,
+    "grasp_held": false
+   },
+   {
+    "side": 0.07,
+    "density": 1200.0,
+    "mass_kg": 0.41160000000000013,
+    "jaw_mu": 2.4,
+    "final_angle_deg": -59.470472589990116,
+    "f_stator_N": 420.64225354945285,
+    "f_mover_N": 421.19690697889524,
+    "dual_contact": true,
+    "max_penetration_mm": 0.7989991028679072,
+    "steady_penetration_mm": 0.7989991028679072,
+    "slip_mm_3s": 0.05197370304448751,
+    "cube_in_stator_frame_mm": [
+     129.7,
+     -0.1,
+     25.5
+    ],
+    "cube_weight_N": 4.037796000000002,
+    "grasp_held": true
+   }
+  ],
+  "large_cube_placement_sweep": [
+   {
+    "side": 0.06,
+    "density": 400.0,
+    "x_local": 0.115,
+    "final_angle_deg": -57.23681528360085,
+    "dual_contact": true,
+    "slip_mm_3s": 0.6923021012070463
+   },
+   {
+    "side": 0.06,
+    "density": 400.0,
+    "x_local": 0.12,
+    "final_angle_deg": -54.11965506267193,
+    "dual_contact": true,
+    "slip_mm_3s": 0.11385231172125984
+   },
+   {
+    "side": 0.06,
+    "density": 400.0,
+    "x_local": 0.125,
+    "final_angle_deg": -52.34610647497041,
+    "dual_contact": true,
+    "slip_mm_3s": 0.18145748833947323
+   },
+   {
+    "side": 0.06,
+    "density": 400.0,
+    "x_local": 0.13,
+    "final_angle_deg": -51.632236268701874,
+    "dual_contact": true,
+    "slip_mm_3s": 0.12324796058004327
+   },
+   {
+    "side": 0.06,
+    "density": 400.0,
+    "x_local": 0.135,
+    "final_angle_deg": -48.8793195262241,
+    "dual_contact": true,
+    "slip_mm_3s": 0.1841190558286196
+   },
+   {
+    "side": 0.06,
+    "density": 1200.0,
+    "x_local": 0.115,
+    "final_angle_deg": -58.89340463330842,
+    "dual_contact": true,
+    "slip_mm_3s": 1.2915879305866798
+   },
+   {
+    "side": 0.06,
+    "density": 1200.0,
+    "x_local": 0.12,
+    "final_angle_deg": -54.84460411509739,
+    "dual_contact": true,
+    "slip_mm_3s": 0.12121290451014297
+   },
+   {
+    "side": 0.06,
+    "density": 1200.0,
+    "x_local": 0.125,
+    "final_angle_deg": -53.122442134555776,
+    "dual_contact": true,
+    "slip_mm_3s": 0.05709211978154557
+   },
+   {
+    "side": 0.06,
+    "density": 1200.0,
+    "x_local": 0.13,
+    "final_angle_deg": -51.99478614147817,
+    "dual_contact": true,
+    "slip_mm_3s": 0.11211717275666773
+   },
+   {
+    "side": 0.06,
+    "density": 1200.0,
+    "x_local": 0.135,
+    "final_angle_deg": -48.88511552055467,
+    "dual_contact": true,
+    "slip_mm_3s": 0.5327612207208506
+   },
+   {
+    "side": 0.065,
+    "density": 400.0,
+    "x_local": 0.115,
+    "final_angle_deg": -57.681934918601634,
+    "dual_contact": true,
+    "slip_mm_3s": 0.45574420427685913
+   },
+   {
+    "side": 0.065,
+    "density": 400.0,
+    "x_local": 0.12,
+    "final_angle_deg": -62.83338107417805,
+    "dual_contact": true,
+    "slip_mm_3s": 0.9391794886046639
+   },
+   {
+    "side": 0.065,
+    "density": 400.0,
+    "x_local": 0.125,
+    "final_angle_deg": -57.320518375529794,
+    "dual_contact": true,
+    "slip_mm_3s": 0.16565218534769643
+   },
+   {
+    "side": 0.065,
+    "density": 400.0,
+    "x_local": 0.13,
+    "final_angle_deg": -0.0003131739161876374,
+    "dual_contact": false,
+    "slip_mm_3s": 3519.87949941329
+   },
+   {
+    "side": 0.065,
+    "density": 400.0,
+    "x_local": 0.135,
+    "final_angle_deg": -52.87080463859435,
+    "dual_contact": true,
+    "slip_mm_3s": 0.052714210454101504
+   },
+   {
+    "side": 0.065,
+    "density": 1200.0,
+    "x_local": 0.115,
+    "final_angle_deg": -58.73978915646703,
+    "dual_contact": true,
+    "slip_mm_3s": 0.11999081219529951
+   },
+   {
+    "side": 0.065,
+    "density": 1200.0,
+    "x_local": 0.12,
+    "final_angle_deg": -63.357200996938886,
+    "dual_contact": true,
+    "slip_mm_3s": 0.48592998652854974
+   },
+   {
+    "side": 0.065,
+    "density": 1200.0,
+    "x_local": 0.125,
+    "final_angle_deg": -57.4856047575363,
+    "dual_contact": true,
+    "slip_mm_3s": 0.43284295855599964
+   },
+   {
+    "side": 0.065,
+    "density": 1200.0,
+    "x_local": 0.13,
+    "final_angle_deg": -52.22449364580204,
+    "dual_contact": true,
+    "slip_mm_3s": 10.551548968977425
+   },
+   {
+    "side": 0.065,
+    "density": 1200.0,
+    "x_local": 0.135,
+    "final_angle_deg": -52.097025644557114,
+    "dual_contact": true,
+    "slip_mm_3s": 10.506336797541238
+   },
+   {
+    "side": 0.07,
+    "density": 400.0,
+    "x_local": 0.115,
+    "final_angle_deg": -65.11911091714788,
+    "dual_contact": true,
+    "slip_mm_3s": 0.14674066310622946
+   },
+   {
+    "side": 0.07,
+    "density": 400.0,
+    "x_local": 0.12,
+    "final_angle_deg": -66.37637878402428,
+    "dual_contact": true,
+    "slip_mm_3s": 0.03666482691003791
+   },
+   {
+    "side": 0.07,
+    "density": 400.0,
+    "x_local": 0.125,
+    "final_angle_deg": -29.370806978295775,
+    "dual_contact": false,
+    "slip_mm_3s": 183.3094488975784
+   },
+   {
+    "side": 0.07,
+    "density": 400.0,
+    "x_local": 0.13,
+    "final_angle_deg": -37.655797198936014,
+    "dual_contact": false,
+    "slip_mm_3s": 77.05376393314866
+   },
+   {
+    "side": 0.07,
+    "density": 400.0,
+    "x_local": 0.135,
+    "final_angle_deg": -47.550056520613474,
+    "dual_contact": true,
+    "slip_mm_3s": 27.88004335598943
+   },
+   {
+    "side": 0.07,
+    "density": 1200.0,
+    "x_local": 0.115,
+    "final_angle_deg": -65.68375011539788,
+    "dual_contact": true,
+    "slip_mm_3s": 0.10476289441602166
+   },
+   {
+    "side": 0.07,
+    "density": 1200.0,
+    "x_local": 0.12,
+    "final_angle_deg": -66.71947935116701,
+    "dual_contact": true,
+    "slip_mm_3s": 0.31126468562373116
+   },
+   {
+    "side": 0.07,
+    "density": 1200.0,
+    "x_local": 0.125,
+    "final_angle_deg": -53.61323247891137,
+    "dual_contact": true,
+    "slip_mm_3s": 13.235799080656864
+   },
+   {
+    "side": 0.07,
+    "density": 1200.0,
+    "x_local": 0.13,
+    "final_angle_deg": -54.584265926753424,
+    "dual_contact": true,
+    "slip_mm_3s": 8.586310194340976
+   },
+   {
+    "side": 0.07,
+    "density": 1200.0,
+    "x_local": 0.135,
+    "final_angle_deg": -54.56951402954453,
+    "dual_contact": true,
+    "slip_mm_3s": 9.123497624248577
+   }
+  ],
+  "interpretation": "3 cm cubes are grasped and held at all friction levels (jaw stalls at -17..-24 deg, so the proxy 'not fully closed' < -5 deg still holds); the documented mass-scaled contact compliance grows for the lightest cubes at the maximum jaw friction (steady overlap up to ~7.8 mm for 3 cm @ 400 kg/m^3). 6.5-7 cm cubes need a ~55-67 deg jaw opening: seated deep in the jaws they are held, near the fingertips the non-parallel jaws wedge them out or let them slide unless friction is high -- a geometric property of the gripper, not an implementation error."
+ },
+ "all_pass": true,
+ "all_pass_including_penetration": false
+}

@@ -1,0 +1,202 @@
+# E5 -- Dynamic object retrieval benchmark (MuJoCo sim2sim of the Isaac Lab
+# B2WZ1HLRetrievalUANABSEnv task).
+#
+# Robot / frozen WBC / UAN / HL-interface constants come from the aligned
+# deployment YAML (single source of truth for the control path). Everything
+# specific to the size-wise evaluation is defined here. Every task constant
+# below was transcribed from the training run's params/env.yaml and is
+# re-checked against that file by tests/test_alignment.py when it is available.
+# Paths are relative to unitree_mujoco/.
+
+experiment: "E5 dynamic object retrieval (size-wise)"
+deploy_config: simulate_python/configs/b2wz1_hl_retrieval_uan.yaml
+
+# ---------------------------------------------------------------------------
+# Checkpoints (SHA-256 verified at worker start-up).
+# ---------------------------------------------------------------------------
+policies:
+  high_level:
+    path: exported_policy/b2wz1_hl_retrieval_uan/high_policy_8.onnx
+    sha256: d2320822801608945545973efe916eb8572c506072caae918fb71161e57fb92d
+    # Byte-identical to <run>/exported/policy.onnx; weights == model_8000.pt.
+    training_run: unitree_b2wz1_hl_retrieval_uan_abs/2026-09-14_13-37-59_multi_head_beta_9d_grouped_entropy
+    checkpoint: model_8000.pt
+    obs_dim: 165
+    action_dim: 9
+  low_level:
+    path: exported_policy/b2wz1_hl_retrieval_uan/low_policy.onnx
+    sha256: 3b7874b7d9f76d09ca383a48b67048bb98f85aa719520c2ac960c259f7a6cde9
+    # Byte-identical to the frozen WBC named in ENV_PARAMS (ll_load_run).
+    training_run: unitree_b2wz1_plb_wholebody_UAN_loco_manip/2026-09-07_20-02-17_uan_model_4000_multipose20260907
+    checkpoint: exported/policy.onnx
+  uan:
+    path: exported_policy/b2wz1_hl_retrieval_uan/model_4000_inference.pt
+    sha256: db53ac18f9834d8a70f0fb37d068ce4f84607da2628d57181f0dcb299ca4c4eb
+    # Byte-identical to IsaacLab asset B2WZ1_GRIPPER/uan/model_4000_multipose20260907_inference.pt
+    isaac_asset: source/isaaclab_assets/data/Robots/Unitree/B2WZ1_GRIPPER/uan/model_4000_multipose20260907_inference.pt
+
+isaac_reference:
+  root: /home/huanyuguo/Workspace_huanyu/IsaacLab_huanyu
+  env_source: source/isaaclab_tasks/isaaclab_tasks/direct/b2wz1_hl_retrieval_DRC_UAN_ABS/b2wz1_hl_env.py
+  run_dir: logs/rsl_rl/unitree_b2wz1_hl_retrieval_uan_abs/2026-09-14_13-37-59_multi_head_beta_9d_grouped_entropy
+
+# ---------------------------------------------------------------------------
+# Evaluation design
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# OFFICIAL E5 evaluation (revision 4): four 1-cm groups over 3-7 cm, each the union of two
+# half-cm strata that replay the SAME 250 base scenarios (A: lower half, B: upper half).
+# The 4-6 cm strata are the immutable base run below (not re-simulated); only the four OOD
+# strata are simulated by `run.py --ood-extension`, then `combine.py` merges both runs.
+# Training size range: 4-6 cm -> [3,4] and [6,7] are out-of-distribution (OOD).
+# ---------------------------------------------------------------------------
+official:
+  base_run: simulate_python/retrieval_experiment/results/20261116T154934Z_official250_retention
+  base_run_sha256:
+    scenarios.json: aae2c1afa64b6aee6274bf5cc6571b199fac45543aa2ae101bcf34c841ccd478
+    episodes.csv: c87629915e8308b68a1b688f8c9ffd029191ef32f0f6a1ef356a458467dba3a5
+    config.yaml: 600d66fbe409c4f85266968b0c4a121034b22dcdea1a7b1be2ab37376a239ce3
+  base_episodes: 1000
+  ood_intervals_cm: [[3.0, 3.5], [3.5, 4.0], [6.0, 6.5], [6.5, 7.0]]
+  final_groups:
+    - {label: "[3.0, 4.0]", type: ood_small, strata: [[3.0, 3.5], [3.5, 4.0]]}
+    - {label: "[4.0, 5.0]", type: in_distribution, strata: [[4.0, 4.5], [4.5, 5.0]]}
+    - {label: "[5.0, 6.0]", type: in_distribution, strata: [[5.0, 5.5], [5.5, 6.0]]}
+    - {label: "[6.0, 7.0]", type: ood_large, strata: [[6.0, 6.5], [6.5, 7.0]]}
+  # regression checks on the reused base data (must match exactly)
+  regression:
+    "[4.0, 5.0]": {task_success: 484, one_shot: 480}
+    "[5.0, 6.0]": {task_success: 477, one_shot: 474}
+
+# Size intervals of a single simulation run (base-run protocol; `--size-intervals` or
+# `--ood-extension` override it). Per base scenario one quantile
+# u_size ~ U(0,1) is drawn and replayed in every interval:
+#   side_cm = lo + u_size * (hi - lo)       (no rounding)
+# Classification: [lo, hi) for all but the last interval of a run, which is closed.
+# The base-run intervals tile the training range (half extent U(0.02, 0.03) m).
+size_intervals_cm: [[4.0, 4.5], [4.5, 5.0], [5.0, 5.5], [5.5, 6.0]]
+trials_per_group: 250          # paired: the same scenario bank is replayed in every interval
+master_seed: 20261117
+workers: 8                     # ~2 GB RSS per worker (torch + MuJoCo models)
+
+# "training": actor observation noise exactly as during training (add_noise=True,
+#             play_mode=False). "none": noiseless diagnostic setting.
+# One run directory always uses ONE setting (recorded in config.yaml of the run).
+observation_noise: training
+
+# ---------------------------------------------------------------------------
+# Cube physics. Training holds density at 800 kg/m^3 (_apply_object_mass
+# overrides the startup mass event). E5 randomizes density at EVALUATION time
+# within +-50 %: one quantile u_density ~ U(0,1) per base scenario, shared by
+# all four size intervals:  density = 400 + 800 * u_density  [kg/m^3].
+# This is an evaluation-time perturbation OUTSIDE the training distribution.
+# mass = density * side^3 (no other mass randomization), inertia = m side^2 / 6.
+# ---------------------------------------------------------------------------
+cube:
+  training_density: 800.0        # kg/m^3 (reference; interactive deploy XML uses it)
+  density_range: [400.0, 1200.0] # kg/m^3, evaluation-time randomization
+  spawn_z_epsilon: 0.001         # cube_center_z = side/2 + epsilon
+  # MuJoCo contact model for every cube contact (see docs/ALIGNMENT_REPORT.md):
+  # time constant = 2 * physics dt (MuJoCo's documented lower bound) and high
+  # impedance, so that the training gripper stall torque cannot crush into the
+  # cube (default soft contact: 15-31 mm; this setting: <= 1.5 mm).
+  priority: 2
+  condim: 3
+  solref: [0.008, 1.0]
+  solimp: [0.99, 0.999, 0.001, 0.5, 2.0]
+  spin_roll_friction: [0.005, 0.0001]
+  # PhysX samples static AND dynamic friction; MuJoCo has one Coulomb
+  # coefficient. "static" uses mu_s (the sticking threshold that governs
+  # grasp retention); "dynamic" uses mu_d. Both are stored per scenario.
+  friction_source: static
+
+# MuJoCo no-slip post-solver iterations (also set in b2wz1_retrieval.xml).
+# 5 = official setting; 0 = MuJoCo default soft friction (sensitivity run only,
+# --noslip-iterations 0). See docs/ALIGNMENT_REPORT.md section "friction creep".
+mujoco_noslip_iterations: 5
+
+# ---------------------------------------------------------------------------
+# Randomization (training EventCfg + _reset_idx), sampled per base scenario.
+# ---------------------------------------------------------------------------
+distributions:
+  cube_material:                  # ball_physics_material (startup, make_consistent)
+    static_friction: [1.0, 2.0]
+    dynamic_friction: [1.0, 2.0]
+    restitution: [0.0, 0.05]
+  robot_material:                 # robot_physics_material, one draw per collision shape
+    static_friction: [0.4, 1.2]
+    dynamic_friction: [0.4, 1.2]
+    restitution: [0.0, 0.1]
+  ground_friction: 1.0            # terrain material, multiply combine
+  base_mass_add: [-2.0, 2.0]      # add_base_mass (operation=add, recompute_inertia)
+  base_com: {x: [-0.02, 0.02], y: [-0.02, 0.02], z: [-0.02, 0.02]}
+  reset:
+    base_z: [0.0, 0.1]
+    roll: [-0.1, 0.1]
+    pitch: [-0.1, 0.1]
+    root_velocity: {x: [-0.05, 0.05], y: [-0.05, 0.05], z: [-0.05, 0.05],
+                    roll: [-0.05, 0.05], pitch: [-0.05, 0.05], yaw: [-0.05, 0.05]}
+    leg_joint_position_scale: [1.0, 1.0]
+    arm_joint_position_scale: [0.95, 1.05]
+  object:                         # PLB polar sector around (0.8, 0)
+    center_xy: [0.8, 0.0]
+    r: [0.0, 3.0]
+    theta_max: 0.7853981633974483
+  retrieval_target:               # world disk around the initialized root XY
+    radius: 0.80
+    z_range_w: [0.30, 1.00]
+
+# Actor observation noise of training (only used when observation_noise=training).
+observation_noise_model:
+  root_ang_vel_b: 0.15
+  projected_gravity_b: 0.05
+  leg_pos_rel: 0.01
+  arm_pos_rel: 0.01
+  gripper_pos_rel: 0.01
+  arm_joint_vel: 0.50
+  object_center_pos_base: 0.02
+  gripper_center_pos_base: 0.02
+  retrieval_target_pos_base: 0.02
+  gripper_orientation_std_rad: 0.03490658503988659   # 2 deg, Gaussian small rotation
+
+# ---------------------------------------------------------------------------
+# Task state machine and termination (training ENV_PARAMS).
+# ---------------------------------------------------------------------------
+task:
+  gripper_center_offset_local: [0.075, 0.0, 0.01]
+  curriculum_s0_to_s1_grasp_error_threshold: 0.20
+  curriculum_s0_to_s1_consecutive_steps: 3
+  curriculum_s1_to_s0_grasp_error_threshold: 0.25
+  curriculum_s1_to_s0_consecutive_steps: 3
+  curriculum_s2_grasp_lost_consecutive_steps: 2
+  grasp_proxy_error_threshold: 0.10
+  gripper_not_fully_closed_angle_threshold: -0.08726646259971647
+  gripper_angle_hold_threshold: 0.05235987755982989
+  grasp_proxy_enter_steps: 3
+  grasp_proxy_exit_steps: 3
+  gripper_cube_contact_force_threshold: 0.30
+  retrieval_success_error_threshold: 0.15
+  retrieval_success_consecutive_steps: 3
+  grasp_error_termination_threshold: 5.0
+  grasp_error_termination_consecutive_steps: 3
+  base_contact_force_threshold: 1.0
+  # Training-only bootstrap (disabled after iteration 500 of a 8000-iteration
+  # run). MUST stay false for evaluation; asserted by the engine.
+  stage2_force_gripper_close_enabled: false
+
+# One-Shot Success = task success AND continuous PHYSICAL retention from the first physical acquisition
+# to the success instant (no release and re-grasp). Evaluated offline by retention.py from the 250-Hz
+# log; thresholds justified in retention.py and docs/ALIGNMENT_REPORT.md, sensitivity in the analysis.
+retention:
+  contact_force_threshold: 0.30            # training contact sensor; touch diagnostics only [N]
+  hold_force_threshold: 10.0               # load-bearing pinch: both jaws >= this [N]
+  acquisition_window_s: 0.10               # settled pinch for one HL period
+  acquisition_max_jaw_range_deg: 1.0       # jaw stalled on the cube
+  acquisition_max_rel_disp_m: 0.002        # cube moves rigidly with the gripper
+  release_min_gap_s: 0.04                  # loss of load-bearing pinch lasting >= 40 ms ...
+  release_rel_disp_fraction_of_side: 0.5   # ... or cube moves >= side/2 relative to the jaws ...
+  release_jaw_closing_deg: 5.0             # ... or the unblocked jaw closes >= 5 deg
+  attempt_min_pinch_s: 0.02                # pinch attempts before the first acquisition (diagnostic)
+
+# Per-episode trajectory logging (10-Hz task traces + 250-Hz retention log ph_*, npz).
+save_trajectories: true

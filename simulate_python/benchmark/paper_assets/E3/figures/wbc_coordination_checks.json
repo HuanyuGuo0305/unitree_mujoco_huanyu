@@ -1,0 +1,50 @@
+{
+ "figure": "wbc_coordination.pdf",
+ "size_in": [
+  7.16,
+  2.95
+ ],
+ "n_values": 168,
+ "slices": {
+  "a": [
+   "B0T5",
+   "B1T5",
+   "B2T5",
+   "B3T5",
+   "B4T5",
+   "B5T5",
+   "B6T5"
+  ],
+  "b": [
+   "B0T5",
+   "B1T5",
+   "B2T5",
+   "B3T5",
+   "B4T5",
+   "B5T5",
+   "B6T5"
+  ],
+  "c": [
+   "B0T0",
+   "B0T1",
+   "B0T2",
+   "B0T3",
+   "B0T4",
+   "B0T5",
+   "B0T6"
+  ],
+  "d": [
+   "B0T0",
+   "B0T1",
+   "B0T2",
+   "B0T3",
+   "B0T4",
+   "B0T5",
+   "B0T6"
+  ]
+ },
+ "max_abs_diff_vs_E3_summary": 0.0,
+ "text_elements_checked_no_overlap": 78,
+ "bands": "95 % percentile bootstrap CI of the mean over seeds (10,000 resamples, seed 20261106, paired resampling); not standard deviations",
+ "lines": "mean over seeds of the 3-30 s RMSE (terminated episodes scored over their valid window)"
+}

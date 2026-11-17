@@ -6,7 +6,7 @@ This is a MuJoCo Sim2Sim benchmark of the existing, validated B2W+Z1 loco-manipu
 |---|---|---|---|---|
 | **E1** Whole-body tracking ablation | Simultaneous base-velocity and EE-pose tracking accuracy | C1 Unified RL (Ours), C3 RL+IK, C5 Cooperative RL | 4 conditions: T1 Still/Fixed, T2 Still/Random, T3 Moving/Fixed, T4 Moving/Random; seeds 0–499 | 6,000 |
 | **E2** Actuation efficiency and smoothness | Wheeled-legged vs legged actuation | C1 Wheeled-Legged, C2 Legged (wheels welded) | 1 dynamic condition; seeds 0–99 | 200 |
-| **E3** Dynamic whole-body coordination | Coupling between base motion and EE command updates | C1, C3, C5 | 5 base-motion bounds × 5 EE-update conditions; seeds 0–99 | 7,500 |
+| **E3** Dynamic whole-body coordination | Bidirectional tracking: base and EE tracking under increasing base motion and EE update frequency | C1, C3, C5 | 7 base-motion bounds × 7 EE-update frequencies; seeds 0–99 | 14,700 |
 
 **Names.** Paper-facing outputs use the names Unified RL (Ours), RL+IK and Cooperative RL. The code and CSVs keep the internal ids C1/C3/C5 (and C2 for Legged).
 
@@ -33,12 +33,16 @@ This is a MuJoCo Sim2Sim benchmark of the existing, validated B2W+Z1 loco-manipu
 
 Definitions and checks are in `results/E2/E2_REPORT.md`.
 
-**E3.** Full-pose EE targets come from a frozen feasible subset (`configs/E3_feasible_rows.npy`).
-- **EE updates:** fixed, or every 6, 4, 3 or 2 s.
-- **Base bounds:** symmetric B ∈ {0, 0.15, 0.30, 0.45, 0.60}.
-- **Analyses:** concurrent-tracking RMSEs and event-aligned responses to isolated switches, with positive excess.
+**E3** (bidirectional 7 × 7, official since 2026-11-13).
+- **EE targets:** full-pose targets drawn from the whole training table (`configs/E3_feasible_rows.npy`).
+- **EE update frequencies:** Fixed, 1/6, 1/5, 1/4, 1/3, 1/2 or 1 Hz.
+- **Base bounds:** symmetric B ∈ {0, 0.1, …, 0.6}, with segments every U(2, 4) s.
+- **Metrics:** base XY, yaw-rate, EE position and EE orientation RMSE.
+- **Paper figure** (`wbc_coordination`): four groups, all slices of the one 7 × 7 grid.
+  - (a), (b): base and EE tracking against B, at 1/2 Hz.
+  - (c), (d): base and EE tracking against EE update frequency, at B = 0.
 
-Config `configs/E3.yaml`; protocol `docs/E3_PROTOCOL.md`; builder `build_e3`.
+Config `configs/E3.yaml`; protocol `docs/E3_PROTOCOL.md`; builder `build_e3`. The 5 × 5 E3 is archived (`docs/E3_BIDIRECTIONAL_REPLACEMENT.md`).
 
 ## Layout
 
@@ -51,7 +55,7 @@ benchmark/
 ├── controllers/           adapters around the original deploy scripts (registry, C1/C2, C3/C4, C5/C6, UAN)
 ├── e1/analyze.py          E1 statistics + LaTeX table from saved episodes
 ├── e2/analyze.py, e2/figures.py               E2 statistics/validation; preliminary figure
-├── e3/                    E3 pose audit, pre-run validation, analysis, events, positive excess, paper figure
+├── e3/                    E3 pose audit, pre-run validation/freeze, extraction, analysis, paper figure
 ├── plots/style.py         shared plot style
 ├── round3/common.py       shared I/O helpers (historical package name)
 ├── tests/                 unit tests + controller parity scripts
@@ -91,19 +95,16 @@ python3 benchmark/run.py --experiment E2 --baselines C1,C2 --seed-start 0 --num-
 python3 -m benchmark.e2.analyze
 python3 -m benchmark.e2.figures          # preliminary inspection figure only
 
-# E3 (7,500 episodes, ~23 min at --jobs 14)
-python3 -m benchmark.e3.pose_audit
-python3 -m benchmark.e3.prerun_validation
+# E3 (14,700 episodes, at --jobs 14; smoke test: docs/E3_PROTOCOL.md section 8)
+python3 -m benchmark.e3.prerun_validation --freeze   # schedule checks + frozen schedules/protocol snapshot
 python3 benchmark/run.py --experiment E3 --baselines C1,C3,C5 --seed-start 0 --num-seeds 100 --headless --jobs 14
 python3 -m benchmark.e3.analyze
-python3 -m benchmark.e3.events_matched
-python3 -m benchmark.e3.positive_excess
-python3 -m benchmark.e3.paper_figures    # wbc_coordination_1x4_stacked + supplementary
+python3 -m benchmark.e3.paper_figures    # wbc_coordination.pdf/.svg/.png
 ```
 
 **Regenerating from saved results.** Every analysis step above reads only the saved episodes; none simulates. To compare with the official outputs without overwriting them:
 - **E1:** `python3 -m benchmark.e1.analyze --out <scratch>`.
-- **E3:** set `benchmark.e3.paper_figures.OUT` and `.SUPP` to a scratch folder before calling `main()`.
+- **E3:** `python3 -m benchmark.e3.analyze --out <scratch>`; for the figure, set `benchmark.e3.paper_figures.E3` and `.OUT` to that scratch folder before calling `main()`.
 
 ## Official results
 
@@ -111,7 +112,7 @@ python3 -m benchmark.e3.paper_figures    # wbc_coordination_1x4_stacked + supple
 |---|---|---|---|
 | E1 | `results/E1/` (README, `E1_500seed_*`, `raw/`) | `paper_assets/E1/` | Tracking table `E1_500seed_tracking_rmse.tex` |
 | E2 | `results/E2/` (`E2_REPORT.md`, `E2_summary_table.csv`, `raw/`) | `paper_assets/E2/` | Efficiency/smoothness table (layout not finalized) |
-| E3 | `results/E3/` (reports, `stats/`, `figures/paper/`, `raw/`) | `paper_assets/E3/` | Figure `wbc_coordination_1x4_stacked.pdf` (+ `.svg`, `_values.csv`) |
+| E3 | `results/E3/` (`E3_REPORT.md`, `protocol/`, `data/`, `stats/`, `figures/paper/`, `raw/`) | `paper_assets/E3/` | Figure `wbc_coordination.pdf` (+ `.svg`, `.png`, `_values.csv`) |
 
 Each results folder has a `MANIFEST_SHA256.txt`; E1 and E2 also have `RAW_SHA256.txt`, checked from inside `raw/`. Each `paper_assets/E*` folder has `ASSETS_SHA256.txt`.
 
@@ -126,6 +127,8 @@ python3 benchmark/tests/test_bitexact_parity.py           # bit-exact version of
 ```
 
 ## History
+
+The 5 × 5 E3 was superseded on 2026-11-13: code at git tag `e3-5x5-pre-bidirectional-replacement`, results in `unitree_mujoco_benchmark_archive_E3_5x5_2026-11-13/` (next to the repository); see `docs/E3_BIDIRECTIONAL_REPLACEMENT.md`.
 
 Superseded protocols and results were removed from this tree on 2026-11-12:
 - round-1/2/3 tooling and tables;

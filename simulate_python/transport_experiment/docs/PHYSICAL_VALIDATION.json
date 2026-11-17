@@ -1,0 +1,214 @@
+{
+ "P1_frozen_level_disk_5s": {
+  "m0.5_mu0.3": {
+   "disk_tilt_deg": 0.0,
+   "disk_motion_mm": 0.004530347723630257,
+   "displacement_mm": 0.032138839742401615,
+   "contact_all_hl_steps": true,
+   "mean_normal_force_N": 4.905000171606436,
+   "expected_net_force_N": 4.905,
+   "max_puck_tilt_deg": 0.004805142755113352
+  },
+  "m1.5_mu0.3": {
+   "disk_tilt_deg": 0.0,
+   "disk_motion_mm": 0.004530347723630257,
+   "displacement_mm": 0.11891579924849793,
+   "contact_all_hl_steps": true,
+   "mean_normal_force_N": 14.71500130802897,
+   "expected_net_force_N": 14.715,
+   "max_puck_tilt_deg": 0.009863673218953765
+  },
+  "m1.0_mu1.0": {
+   "disk_tilt_deg": 0.0,
+   "disk_motion_mm": 0.004530347723630257,
+   "displacement_mm": 0.05750407217419706,
+   "contact_all_hl_steps": true,
+   "mean_normal_force_N": 9.809968675192218,
+   "expected_net_force_N": 9.81,
+   "max_puck_tilt_deg": 0.0007288657167365146
+  }
+ },
+ "P1_pass": true,
+ "P2_disk_attachment_max_err": 1.0669892969161765e-07,
+ "P2_pass": true,
+ "P3": {
+  "first_no_contact_step": 1,
+  "first_drop_step": 8,
+  "drop_delay_steps": 8,
+  "puck_disk_at_drop": [
+   0.5768734216690063,
+   0.7964478135108948,
+   -0.6603191494941711
+  ],
+  "stator_contact_after_loss": true,
+  "no_contact_counter_sequence": [
+   0,
+   1,
+   2,
+   0,
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7,
+   8,
+   9,
+   10,
+   11,
+   12,
+   13,
+   14,
+   15,
+   16,
+   17,
+   18,
+   19,
+   20,
+   21
+  ]
+ },
+ "P3_pass": true,
+ "P4": {
+  "brief_lift_10cm": {
+   "no_contact_counts": [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "dropped": false
+  },
+  "on_ground": {
+   "disk_contact": false,
+   "stator_contact": false,
+   "dropped_after_5": true,
+   "puck_touches_floor": true
+  }
+ },
+ "P4_pass": true,
+ "P5_frozen_tilted_disk_2s": {
+  "tilt12_mu0.3_m0.5": {
+   "disk_tilt_deg": 11.999992370605469,
+   "disk_motion_mm": 0.0016689965605110046,
+   "displacement_mm": 0.3213561431039125,
+   "contact_all_hl_steps": true,
+   "mean_normal_force_N": 4.905000516618743,
+   "expected_net_force_N": 4.905,
+   "max_puck_tilt_deg": 0.020508131696087693
+  },
+  "tilt12_mu0.3_m1.5": {
+   "disk_tilt_deg": 11.999992370605469,
+   "disk_motion_mm": 0.0016689965605110046,
+   "displacement_mm": 0.6381327984854579,
+   "contact_all_hl_steps": true,
+   "mean_normal_force_N": 14.715001326717465,
+   "expected_net_force_N": 14.715,
+   "max_puck_tilt_deg": 0.016505434633264742
+  },
+  "tilt12_mu0.6_m0.5": {
+   "disk_tilt_deg": 11.999992370605469,
+   "disk_motion_mm": 0.0016689965605110046,
+   "displacement_mm": 0.2736317983362824,
+   "contact_all_hl_steps": true,
+   "mean_normal_force_N": 4.904992716247639,
+   "expected_net_force_N": 4.905,
+   "max_puck_tilt_deg": 0.0
+  },
+  "tilt12_mu0.6_m1.5": {
+   "disk_tilt_deg": 11.999992370605469,
+   "disk_motion_mm": 0.0016689965605110046,
+   "displacement_mm": 0.42921811109408736,
+   "contact_all_hl_steps": true,
+   "mean_normal_force_N": 14.71506768848902,
+   "expected_net_force_N": 14.715,
+   "max_puck_tilt_deg": 0.0
+  },
+  "tilt25_mu0.3_m0.5": {
+   "disk_tilt_deg": 24.999996185302734,
+   "disk_motion_mm": 0.001669196080911206,
+   "displacement_mm": 1341.7484760284424,
+   "contact_all_hl_steps": false,
+   "mean_normal_force_N": 0.0,
+   "expected_net_force_N": 4.905,
+   "max_puck_tilt_deg": 114.99144911363939
+  },
+  "tilt25_mu0.3_m1.5": {
+   "disk_tilt_deg": 24.999996185302734,
+   "disk_motion_mm": 0.001669196080911206,
+   "displacement_mm": 1271.4064121246338,
+   "contact_all_hl_steps": false,
+   "mean_normal_force_N": 0.0,
+   "expected_net_force_N": 14.715,
+   "max_puck_tilt_deg": 114.99317023941947
+  },
+  "tilt25_mu0.6_m0.5": {
+   "disk_tilt_deg": 24.999996185302734,
+   "disk_motion_mm": 0.001669196080911206,
+   "displacement_mm": 0.779861758928746,
+   "contact_all_hl_steps": true,
+   "mean_normal_force_N": 4.904993257639106,
+   "expected_net_force_N": 4.905,
+   "max_puck_tilt_deg": 0.044235084952332
+  },
+  "tilt25_mu0.6_m1.5": {
+   "disk_tilt_deg": 24.999996185302734,
+   "disk_motion_mm": 0.0019075814634561539,
+   "displacement_mm": 1.1396445333957672,
+   "contact_all_hl_steps": true,
+   "mean_normal_force_N": 14.715014879169422,
+   "expected_net_force_N": 14.715,
+   "max_puck_tilt_deg": 0.041181804441170054
+  }
+ },
+ "P5_pass": true,
+ "P6": {
+  "m0.5": {
+   "mean_abs_arm_torque_Nm": [
+    0.146,
+    10.062,
+    10.958,
+    4.523,
+    0.147,
+    0.146
+   ],
+   "joint2_torque_Nm": 10.062000179290772
+  },
+  "m1.5": {
+   "mean_abs_arm_torque_Nm": [
+    0.223,
+    14.408,
+    15.561,
+    6.923,
+    0.159,
+    0.083
+   ],
+   "joint2_torque_Nm": 14.407501602172852
+  }
+ },
+ "P6_pass": true,
+ "D1_wbc_hold_high_zero_residual": {
+  "mu0.3": {
+   "disk_tilt_deg_at_1s_3s_6s": [
+    22.987733840942383,
+    20.8724422454834,
+    19.96392250061035
+   ],
+   "puck_dropped": true
+  },
+  "mu1.0": {
+   "disk_tilt_deg_at_1s_3s_6s": [
+    25.960790634155273,
+    29.972244262695312,
+    29.560462951660156
+   ],
+   "puck_dropped": false
+  }
+ },
+ "all_pass": true
+}

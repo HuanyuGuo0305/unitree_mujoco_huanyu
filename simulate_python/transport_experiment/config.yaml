@@ -1,0 +1,80 @@
+# E4 -- Dynamic Nonprehensile Transport benchmark (MuJoCo).
+#
+# Robot / frozen WBC / UAN / task constants come from the aligned deployment
+# YAML below (single source of truth). Everything specific to the paired
+# evaluation is defined here. Paths are relative to unitree_mujoco/.
+
+deploy_config: simulate_python/configs/b2wz1_hl_transport_uan.yaml
+
+# Frozen WBC shared by all four methods. SHA-256 verified against
+# IsaacLab_huanyu/logs/rsl_rl/unitree_b2wz1_plb_wholebody_UAN_loco_manip/
+#   2026-10-27_12-47-31_uan_model_4000_multipose20260907/exported/policy.onnx
+# = ll_load_run in params/env.yaml of all three high-level training runs.
+low_policy:
+  path: exported_policy/b2wz1_wbc_plb_uan/policy_wbc_uan_transport.onnx
+  sha256: 6b5aa5de8a438c07062ab5d9acd8e9d562ccb7a72f32aad72912f7707139a517
+uan_model_sha256: db53ac18f9834d8a70f0fb37d068ce4f84607da2628d57181f0dcb299ca4c4eb
+
+# Verified policy mapping (SHA-256 identical to <run>/exported/policy.onnx; ONNX
+# output matches <run>/exported/policy.pt and the final checkpoint model_7999.pt
+# to <= 2e-5; observation normalizer and Beta-mean -> [-1,1] map are in-graph).
+methods:
+  no_residual:
+    policy: null
+  pos_only:
+    policy: exported_policy/b2wz1_hl_transport_uan/high_policy_pos.onnx
+    sha256: 5d3b419377787442b95bbfe681c15ed952df5eac549abec6b0b381865c604817
+    training_run: unitree_b2wz1_hl_transport_pos_only_uan/2026-11-13_17-47-25_single_beta_3d_position_only
+  ori_only:
+    policy: exported_policy/b2wz1_hl_transport_uan/high_policy_orn.onnx
+    sha256: 42c746419e119e9701eed0a98da77bfe6bd788cbf636cff8479a0ee1dc03401d
+    training_run: unitree_b2wz1_hl_transport_ori_only_uan/2026-11-12_19-03-12_single_beta_3d_orientation_only
+  full:
+    policy: exported_policy/b2wz1_hl_transport_uan/high_policy_2.onnx
+    sha256: db78304602566538ea099c3f3a0679bcb9b731067d4e036374ad03cc537b70c1
+    training_run: unitree_b2wz1_hl_transport_uan/2026-10-27_14-31-10_single_beta_6d_four_pose_pos_rate_0p1
+# NOT used: high_policy_1.onnx (run 2026-10-26_17-38-10) was trained on the older
+# 2026-09-26 WBC, not on the WBC above.
+
+# ---------------------------------------------------------------------------
+# Paired scenarios
+# ---------------------------------------------------------------------------
+master_seed: 20261114
+n_scenarios: 500          # official: 500 paired scenarios per method (user request 2026-11-14); --n for debugging
+
+# Distributions copied from params/env.yaml of the training runs.
+distributions:
+  puck_mass_range: [0.50, 1.50]          # kg, "abs", inertia recomputed
+  puck_friction_range: [0.30, 1.00]      # static & dynamic, dynamic = min(dyn, static)
+  # MuJoCo has ONE Coulomb coefficient per contact. "static" uses the Isaac Lab
+  # static coefficient (U(0.3, 1.0), the stick/slip threshold); "dynamic" uses the
+  # paired dynamic coefficient (min of two uniforms). Both are stored per scenario.
+  puck_friction_source: static
+  puck_spawn_xy: 0.01                    # m, dx, dy ~ U(-0.01, 0.01) in the disk frame
+  base_ref_ranges: [[-0.6, 0.6], [-0.6, 0.6], [-0.6, 0.6]]   # vx, vy [m/s], wz [rad/s]
+  base_hold_steps: [30, 50]              # 3-5 s at 10 Hz, inclusive
+  ee_hold_steps: [40, 50]                # 4-5 s at 10 Hz, inclusive
+  physical_randomization:
+    enabled: true
+    base_mass_add_range: [-2.0, 2.0]     # kg, recompute inertia
+    base_com_range: {x: [-0.02, 0.02], y: [-0.02, 0.02], z: [-0.02, 0.02]}
+  reset_randomization:
+    enabled: true
+    base_z: [0.0, 0.10]
+    roll: [-0.10, 0.10]
+    pitch: [-0.10, 0.10]
+    root_velocity: {x: [-0.05, 0.05], y: [-0.05, 0.05], z: [-0.05, 0.05],
+                    roll: [-0.05, 0.05], pitch: [-0.05, 0.05], yaw: [-0.05, 0.05]}
+    arm_joint_position_scale: [0.95, 1.05]
+# Not reproduced (documented in docs/ALIGNMENT_REPORT.md): wheel/ground material
+# randomization (MuJoCo keeps the E1-E3 nominal mu = 1.0, inside [0.4, 1.2]) and
+# actor observation noise (evaluation is noiseless, i.e. Isaac Lab play mode).
+
+# ---------------------------------------------------------------------------
+# Execution / statistics
+# ---------------------------------------------------------------------------
+workers: 24
+statistics:
+  bootstrap_resamples: 10000
+  bootstrap_seed: 20261114
+  confidence: 0.95

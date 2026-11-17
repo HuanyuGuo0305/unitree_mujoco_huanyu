@@ -1,0 +1,9 @@
+0c46a35e51008f33f25f704340dfa617c141e54f wbc benchmarking
+branch e3_bidirectional
+--- git status --porcelain (benchmark code changes are the uncommitted E3 replacement)
+ M simulate_python/benchmark/configs/E3.yaml
+ M simulate_python/benchmark/e3/analyze.py
+ M simulate_python/benchmark/e3/extract.py
+ M simulate_python/benchmark/e3/prerun_validation.py
+ M simulate_python/benchmark/scenarios/experiments.py
+?? exported_policy/b2wz1_hl_transport_uan/high_policy_orn.onnx

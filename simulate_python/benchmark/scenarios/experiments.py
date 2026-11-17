@@ -172,9 +172,15 @@ def build_e2(exp_cfg: dict, condition: str, seed: int, control_dt: float = 0.02)
 
 
 # ==========================================================================
-# E3: random discrete full-pose EE commands x base-motion intensity
+# E3 (official since 2026-11-13): bidirectional 7 x 7 whole-body tracking.
+# Base-motion bound B x EE command-update frequency, random discrete full-pose
+# EE targets. Generators unchanged from the 5 x 5 E3 (archived); only the levels
+# and the pose-sequence length (enough for the 1 s interval) differ. Because the
+# pose stream draws sequentially, the 28-pose sequence of a seed begins with the
+# 16-pose sequence the 5 x 5 E3 used.
 # ==========================================================================
-E3_POSE_SEQUENCE_LENGTH = 16   # enough for 27 s at the shortest (2 s) interval
+E3_PROTOCOL = "bidirectional_7x7"
+E3_POSE_SEQUENCE_LENGTH = 28   # 1 s interval: poses 0..26 over the 27 s window
 
 
 def e3_conditions(exp_cfg: dict):
@@ -184,6 +190,29 @@ def e3_conditions(exp_cfg: dict):
         for ti, t in enumerate(exp_cfg["ee"]["update_intervals_s"]):
             out.append((f"B{bi}T{ti}", float(b), None if t is None else float(t)))
     return out
+
+
+def e3_update_hz(exp_cfg: dict) -> list[float]:
+    return [0.0 if t is None else 1.0 / float(t) for t in exp_cfg["ee"]["update_intervals_s"]]
+
+
+def e3_slice(exp_cfg: dict, name: str) -> list[str]:
+    """Condition ids of a figure slice of the 7 x 7 grid, in plotting order.
+
+    vs_base_bound: B0..B6 at the configured EE update frequency (groups a, b);
+    vs_ee_update:  T0..T6 at the configured base bound (groups c, d)."""
+    spec = exp_cfg["figure_slices"][name]
+    levels = [float(b) for b in exp_cfg["base"]["levels"]]
+    hz = e3_update_hz(exp_cfg)
+    if name == "vs_base_bound":
+        ti = [j for j, f in enumerate(hz) if abs(f - float(spec["ee_update_hz"])) < 1e-9]
+        assert len(ti) == 1, spec
+        return [f"B{bi}T{ti[0]}" for bi in range(len(levels))]
+    if name == "vs_ee_update":
+        bi = [i for i, b in enumerate(levels) if abs(b - float(spec["base_bound"])) < 1e-9]
+        assert len(bi) == 1, spec
+        return [f"B{bi[0]}T{ti}" for ti in range(len(hz))]
+    raise KeyError(name)
 
 
 def parse_e3_condition(condition: str, exp_cfg: dict):
@@ -235,9 +264,10 @@ class HoldFirstTargetScenario(PrecomputedScenario):
 
 
 def build_e3(exp_cfg: dict, condition: str, seed: int, control_dt: float = 0.02):
-    if exp_cfg.get("protocol") != "random_full_pose":
-        raise ValueError("configs/E3.yaml is not the random-full-pose E3 protocol")
+    if exp_cfg.get("protocol") != E3_PROTOCOL:
+        raise ValueError(f"configs/E3.yaml is not the {E3_PROTOCOL} E3 protocol")
     bound, interval = parse_e3_condition(condition, exp_cfg)
+    ti = int(condition[3])
     n_ticks = n_eval_ticks(exp_cfg, control_dt)
     table = keypoint_table(exp_cfg["_global"])
     rows = sc.e3_pose_sequence(seed, e3_feasible_rows(exp_cfg), E3_POSE_SEQUENCE_LENGTH)
@@ -245,15 +275,17 @@ def build_e3(exp_cfg: dict, condition: str, seed: int, control_dt: float = 0.02)
     ee_schedule = sc.make_ee_random_pose_schedule(n_ticks, control_dt, table, rows, interval)
     description = {
         "experiment": "E3",
-        "protocol": "random_full_pose",
+        "protocol": E3_PROTOCOL,
         "condition": condition,
         "base_bound": bound,
         "base_bound_units": "|vx|,|vy| m/s; |wz| rad/s (body frame)",
         "base_segment_duration_range_s": list(exp_cfg["base"]["segment_duration_range"]),
         "ee_update_interval_s": interval,
-        "ee_level": "Fixed" if interval is None else f"{interval:g}s",
+        "ee_update_hz": e3_update_hz(exp_cfg)[ti],
+        "ee_level": str(exp_cfg["ee"]["update_hz_labels"][ti]),
         "ee_interpolation": "none (sample-and-hold)",
         "ee_pose_table_rows_used": ee_schedule.row_indices.tolist(),
+        "ee_pose_sequence_length": E3_POSE_SEQUENCE_LENGTH,
         "ee_settle_hold": "first target of the sequence (no jump at t = 3 s)",
         "ee_command_table_sha256": table.sha256,
         "n_eval_ticks": n_ticks,

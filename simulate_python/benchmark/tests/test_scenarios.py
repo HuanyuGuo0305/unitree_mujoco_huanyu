@@ -322,12 +322,19 @@ class TestMetricMath(unittest.TestCase):
 # ==========================================================================
 # 14. Confidence intervals
 # ==========================================================================
-class TestE3RandomPose(unittest.TestCase):
-    """E3: random full-pose sample-and-hold commands."""
+class TestE3Bidirectional(unittest.TestCase):
+    """E3: bidirectional 7 x 7 grid of random full-pose sample-and-hold commands."""
 
     def setUp(self):
         self.cfg, glob = _cfgs("E3")
         self.table = E.keypoint_table(glob)
+
+    def test_levels(self):
+        np.testing.assert_allclose(self.cfg["base"]["levels"], [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6])
+        np.testing.assert_allclose(E.e3_update_hz(self.cfg), [0, 1 / 6, 1 / 5, 1 / 4, 1 / 3, 1 / 2, 1])
+        self.assertEqual([str(x) for x in self.cfg["ee"]["update_hz_labels"]],
+                         ["Fixed", "1/6", "1/5", "1/4", "1/3", "1/2", "1"])
+        self.assertEqual(len(E.e3_conditions(self.cfg)), 49)
 
     def test_targets_are_table_rows_and_switch_on_schedule(self):
         for cid, b, t in E.e3_conditions(self.cfg):
@@ -339,17 +346,36 @@ class TestE3RandomPose(unittest.TestCase):
                 self.assertEqual(len(ch), 0)
             else:
                 steps = int(round(t / CONTROL_DT))
+                np.testing.assert_array_equal(s.ee.switch_ticks, np.arange(steps, len(ee), steps))
                 self.assertTrue(set(ch.tolist()) <= set(range(steps, len(ee), steps)))
+            self.assertLessEqual(np.abs(s.base.commands).max(), b + 1e-6)
+
+    def test_one_hz_switches_every_second(self):
+        s = E.build_e3(self.cfg, "B0T6", 3)
+        np.testing.assert_array_equal(np.diff(s.ee.switch_ticks), 50)
+        self.assertEqual(len(s.ee.row_indices), 27)
 
     def test_prefix_and_pairing(self):
-        longest = E.build_e3(self.cfg, "B0T4", 9).ee.row_indices
-        for ti in range(5):
+        longest = E.build_e3(self.cfg, "B0T6", 9).ee.row_indices
+        for ti in range(7):
             r = E.build_e3(self.cfg, f"B3T{ti}", 9).ee.row_indices
             np.testing.assert_array_equal(r, longest[:len(r)])
         ref = E.build_e3(self.cfg, "B2T0", 9).base.commands
-        for ti in range(1, 5):
+        for ti in range(1, 7):
             np.testing.assert_array_equal(E.build_e3(self.cfg, f"B2T{ti}", 9).base.commands, ref)
         self.assertTrue(np.all(E.build_e3(self.cfg, "B0T3", 9).base.commands == 0))
+
+    def test_longer_pose_sequence_keeps_previous_prefix(self):
+        rows = E.e3_feasible_rows(self.cfg)
+        for seed in range(20):
+            np.testing.assert_array_equal(sc.e3_pose_sequence(seed, rows, 28)[:16],
+                                          sc.e3_pose_sequence(seed, rows, 16))
+
+    def test_figure_slices(self):
+        self.assertEqual(E.e3_slice(self.cfg, "vs_base_bound"), [f"B{i}T5" for i in range(7)])
+        self.assertEqual(E.e3_slice(self.cfg, "vs_ee_update"), [f"B0T{j}" for j in range(7)])
+        self.assertEqual(E.build_e3(self.cfg, "B4T5", 0).description["ee_update_hz"], 0.5)
+        self.assertEqual(E.build_e3(self.cfg, "B0T2", 0).description["base_bound"], 0.0)
 
     def test_settle_holds_first_target(self):
         s = E.build_e3(self.cfg, "B1T2", 4)
@@ -449,7 +475,7 @@ class TestSeedPolicy(unittest.TestCase):
 
 
 # ==========================================================================
-# E1 scenario-level checks (E2: tests/test_e2.py; E3: TestE3RandomPose above)
+# E1 scenario-level checks (E2: tests/test_e2.py; E3: TestE3Bidirectional above)
 # ==========================================================================
 class TestExperimentConfigs(unittest.TestCase):
     def test_e1_conditions_cover_the_2x2(self):

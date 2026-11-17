@@ -396,6 +396,11 @@ def main():
         )
 
     episode_length_s = float(cfg["episode_length_s"])
+    # E5 alignment: Isaac Lab DirectRLEnv uses
+    #   max_episode_length = ceil(episode_length_s / step_dt) = 150
+    # and times out when episode_length_buf >= max_episode_length - 1, i.e.
+    # after 149 completed 10-Hz HL steps (14.9 s), not after 15.0 s.
+    max_episode_hl_steps = int(math.ceil(round(episode_length_s / hl_control_dt, 9)))
     auto_reset = bool(cfg.get("auto_reset", True))
     rng = np.random.default_rng(int(cfg.get("random_seed", 0)))
 
@@ -1416,6 +1421,10 @@ def main():
             *[f"arm_q_err{j+1}" for j in range(6)],
             *[f"uan_a{j+1}" for j in range(6)],
             *[f"uan_dtau{j+1}" for j in range(6)],
+            # E5 diagnostics (observation-only).
+            "gripper_target", "gripper_q", "gripper_exec_norm", "grasp_proxy",
+            "cube_x", "cube_y", "cube_z",
+            "root_x", "root_y",
         ]
         debug_csv_writer.writerow(debug_header)
         debug_csv_file.flush()
@@ -1468,6 +1477,12 @@ def main():
             *arm_q_err.tolist(),
             *last_uan_action.tolist(),
             *last_uan_delta_tau.tolist(),
+            float(gripper_target),
+            float(qpos_mujoco[gripper_mujoco_index]),
+            float(executed_gripper_cmd_norm),
+            int(grasp_confidence_proxy),
+            *cube_center_pos_w.tolist(),
+            float(d.qpos[0]), float(d.qpos[1]),
         ]
         debug_csv_writer.writerow(row)
         debug_csv_file.flush()
@@ -1694,6 +1709,7 @@ def main():
     sim_time = 0.0
     sim_counter = 0
     ll_blocks_completed_in_hl_interval = 0
+    hl_steps_in_episode = 0
 
     reset_episode(sim_time)
 
@@ -1753,6 +1769,7 @@ def main():
                 # At the 0.1-s boundary, update task/proxy state, infer/decode the
                 # next HL action, then immediately build the next LL observation.
                 if ll_blocks_completed_in_hl_interval >= ll_steps_per_hl_step:
+                    hl_steps_in_episode += 1
                     run_high_level_policy()
                     ll_blocks_completed_in_hl_interval = 0
 
@@ -1761,8 +1778,9 @@ def main():
                 run_low_level_policy()
                 write_tracking_debug_row(sim_time)
 
-            if auto_reset and (sim_time - episode_start_time) >= episode_length_s:
+            if auto_reset and hl_steps_in_episode >= max_episode_hl_steps - 1:
                 reset_episode(sim_time)
+                hl_steps_in_episode = 0
                 infer_first_hl_and_ll_after_reset()
 
             update_custom_visualization(viewer)
